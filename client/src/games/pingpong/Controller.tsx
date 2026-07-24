@@ -277,6 +277,7 @@ export default function Controller({ initialCode }: ControllerProps) {
                     광선검이 움직여요. (빠르게 그을수록 잘 벰)
                   </p>
                   <button
+                    type="button"
                     onClick={() => {
                       recenter()
                       socket.emit('ctrl:slash', { x: 0.5, y: 0.5, t: 'down' })
@@ -287,14 +288,19 @@ export default function Controller({ initialCode }: ControllerProps) {
                   >
                     🗡️ 베기 시작 / 다시
                   </button>
-                  <button onClick={recenter} className="mt-4 text-sm text-white/60 underline">
-                    중앙 재정렬 (지금 자세를 가운데로)
-                  </button>
-                  <div className="mt-6 text-6xl animate-pulse-slow">🗡️</div>
-                  <p className="text-white/40 text-xs mt-3 text-center">
+                  <div className="mt-5 text-6xl animate-pulse-slow">🗡️</div>
+                  <p className="text-white/40 text-xs mt-2 text-center">
                     폰을 <b className="text-white/60">거의 눕혀</b> 편하게 들고, 화면의 로고를 겨눠
                     좌우로 <b className="text-white/60">돌리고</b> 상하로 <b className="text-white/60">까딱</b>여 그어요.
                   </p>
+                  {/* 중앙 재정렬 — 큼직한 버튼으로, 시작 버튼과 충분히 띄움 (탭 잘 되게) */}
+                  <button
+                    type="button"
+                    onClick={recenter}
+                    className="mt-8 w-full py-3.5 rounded-2xl font-bold text-base text-white/90 border border-white/25 bg-white/10 active:bg-white/25 active:scale-95 transition"
+                  >
+                    🎯 중앙 재정렬 (지금 겨눈 방향을 가운데로)
+                  </button>
                 </>
               )}
             </div>
