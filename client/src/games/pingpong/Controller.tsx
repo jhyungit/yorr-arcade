@@ -160,20 +160,22 @@ export default function Controller({ initialCode }: ControllerProps) {
 
   // 슬래셔 조준 스트리밍: 폰을 "레이저 포인터"처럼 화면에 겨눠 조준.
   //  - 좌우(x): 폰을 좌우로 "돌려(yaw=alpha)" 겨눔 → 겨눈 방향으로 블레이드가 감 (기울이기 아님)
-  //             '베기 시작' 때 겨눈 방향이 중앙. (alpha 없으면 gamma 기울기로 폴백)
-  //  - 상하(y): beta 를 "땅 기준 고정 각도(BETA_CENTER)"로 → 폰을 거의 눕혀 들어도 중앙
+  //  - 상하(y): 폰을 상하로 "까딱(pitch=beta)" → 겨눈 높이로
+  //  좌우·상하 모두 '베기 시작'/'중앙 재정렬' 누른 순간 자세를 정중앙(0.5,0.5)으로 잡는다.
+  //  (alpha 없는 기기는 좌우를 gamma 기울기로 폴백)
   useEffect(() => {
     if (!(tiltOn && isSlasher && joined)) return
     const YAW_SENS = 26 // 좌우(포인팅) 감도: 이 각도(도)만큼 돌리면 화면 절반. 작을수록 민감
-    const BETA_CENTER = 20 // 세로 중앙에 대응하는 폰 기울기(도). 0=수평, 90=수직. 낮을수록 눕혀서
     const BETA_SENS = 26 // 상하 감도
     const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
     const onOrient = (e: DeviceOrientationEvent) => {
       if (e.beta == null) return
       const n = tiltNeutral.current
       if (!n.has) {
+        // 지금 자세를 좌우·상하 모두 중앙 기준으로 캡처 (재정렬 시 정중앙)
         n.a = e.alpha ?? 0
         n.g = e.gamma ?? 0
+        n.b = e.beta
         n.has = true
       }
       // 좌우: 포인팅(yaw=alpha) 우선. alpha 없으면 기울기(gamma) 폴백.
@@ -185,8 +187,8 @@ export default function Controller({ initialCode }: ControllerProps) {
       } else {
         x = clamp01(0.5 + ((e.gamma ?? 0) - n.g) / (2 * YAW_SENS))
       }
-      // 상하 반전: 폰 위로 들면 검도 위로 (y 는 위가 0)
-      const y = clamp01(0.5 - (e.beta - BETA_CENTER) / (2 * BETA_SENS))
+      // 상하 반전: 폰 위로 들면(까딱 올리면) 검도 위로 (y 는 위가 0)
+      const y = clamp01(0.5 - (e.beta - n.b) / (2 * BETA_SENS))
       const now = Date.now()
       if (now - lastAim.current < 28) return // ~35Hz 스로틀
       lastAim.current = now
