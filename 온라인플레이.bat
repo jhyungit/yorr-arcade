@@ -1,0 +1,9 @@
+@echo off
+chcp 65001 >nul
+title YORR - Online (ngrok)
+echo Starting ONLINE play (build + server + ngrok public URL)...
+echo.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0online-play.ps1"
+echo.
+echo Press any key to close this window...
+pause >nul

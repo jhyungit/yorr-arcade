@@ -1,0 +1,28 @@
+# 의존성
+node_modules/
+
+# 빌드 결과물
+dist/
+build/
+
+# 환경 변수 / 로컬 설정
+.env
+.env.local
+*.local
+
+# 로그
+*.log
+npm-debug.log*
+
+# 에디터 / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Claude Code 로컬 설정 (프로젝트 규칙 CLAUDE.md 는 루트에 있어 그대로 추적됨)
+.claude/
+
+# Vite가 자동 생성하는 HTTPS 인증서 캐시
+client/.vite/
+**/.cert/

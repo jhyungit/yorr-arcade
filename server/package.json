@@ -1,0 +1,15 @@
+{
+  "name": "yorr-server",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "요트 다이스 실시간 멀티플레이 서버 (Socket.IO)",
+  "scripts": {
+    "dev": "node --watch index.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}

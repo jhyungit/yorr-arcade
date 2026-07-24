@@ -1,0 +1,229 @@
+/* Tailwind v4 */
+@import 'tailwindcss';
+
+/* =============================================================
+   팔레트 — 실제 요트다이스 제품 참고
+   검정 트레이 프레임 + 빨간 펠트 + 흰 주사위(검정 눈),
+   배경은 파스텔 스카이블루(붉은 트레이가 깔끔히 도드라지는 대비).
+   (변수 이름은 그대로 유지 → 각 컴포넌트가 자동 반영)
+   ============================================================= */
+:root {
+  --paper: #e8f1fa; /* 파스텔 스카이블루 */
+  --card: #ffffff;
+  --card-2: #f3f8fd;
+  --ink: #232b31;
+  --ink-2: #59636d;
+  --ink-3: #939ca6;
+  --line: #dfe8f1;
+  --line-2: #ccd8e3;
+
+  /* 트레이 프레임 (검정/차콜) — 예전 wood-* 자리를 그대로 사용 */
+  --wood-hi: #43454d;
+  --wood: #26272d;
+  --wood-lo: #131317;
+
+  /* 펠트 (레드) */
+  --felt: #d8433a;
+  --felt-2: #c1362e;
+  --felt-lo: #9c2a24;
+  --shelf: #1a1b1f;
+
+  /* 강조: 액션/프리뷰(레드) · 확정(청록) */
+  --coral: #e0483a;
+  --coral-lo: #c23a2d;
+  --pos: #12907f;
+
+  /* 주사위 (상아빛 흰색 + 검정 눈, 제품처럼 1눈도 검정) */
+  --dice: #ffffff;
+  --dice-lo: #ece7db;
+  --pip: #23211d;
+  --pip-one: #23211d;
+
+  --die: 58px; /* 주사위 한 변 크기 (반응형에서 조정) */
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--paper);
+  /* 여러 겹으로 깊이 주기: (1) 은은한 도트 텍스처 (2) 위쪽 화이트 글로우
+     (3) 좌상단 밝은 블루 (4) 우하단 살짝 진한 블루 */
+  background-image: radial-gradient(circle at 1px 1px, rgba(50, 95, 140, 0.07) 1px, transparent 0),
+    radial-gradient(1100px 660px at 50% -14%, #ffffff, transparent 60%),
+    radial-gradient(760px 520px at 10% 6%, #ecf6ff, transparent 55%),
+    radial-gradient(940px 600px at 92% 118%, #c7dff3, transparent 55%);
+  background-size: 22px 22px, auto, auto, auto;
+  background-repeat: repeat, no-repeat, no-repeat, no-repeat;
+  background-attachment: fixed;
+  color: var(--ink);
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  font-family: Pretendard, 'Pretendard Variable', system-ui, -apple-system, 'Malgun Gothic',
+    'Apple SD Gothic Neo', sans-serif;
+}
+
+.label-mono {
+  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Consolas, monospace;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+/* =============================================================
+   3D 주사위 큐브
+   - 6면: front=1, back=6, right=2, left=5, top=3, bottom=4
+     (마주보는 면 합=7)
+   - 회전은 DiceTray가 Web Animations API로 제어. 여기선 정적 면만 정의.
+   ============================================================= */
+.cube {
+  position: relative;
+  width: var(--die);
+  height: var(--die);
+  transform-style: preserve-3d;
+  /* 기본 살짝 기울여 두께가 보이게 (트레이가 추가로 rotateX 적용) */
+  transform: rotateX(-18deg) rotateY(22deg);
+}
+
+.cube-face {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  padding: 15%;
+  border-radius: 22%;
+  /* 상아빛 + 좌상단 하이라이트 → 우하단 음영 (둥근 주사위 질감) */
+  background: radial-gradient(125% 125% at 30% 24%, #ffffff, var(--dice) 46%, var(--dice-lo) 100%);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06), inset 0 3px 6px rgba(255, 255, 255, 0.75),
+    inset 0 -7px 12px rgba(150, 140, 120, 0.35);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+/* 각 면을 큐브 표면으로 배치 (translateZ = 한 변의 절반) */
+.cube-face.f-front { transform: translateZ(calc(var(--die) / 2)); }
+.cube-face.f-back { transform: rotateY(180deg) translateZ(calc(var(--die) / 2)); }
+.cube-face.f-right { transform: rotateY(90deg) translateZ(calc(var(--die) / 2)); }
+.cube-face.f-left { transform: rotateY(-90deg) translateZ(calc(var(--die) / 2)); }
+.cube-face.f-top { transform: rotateX(90deg) translateZ(calc(var(--die) / 2)); }
+.cube-face.f-bottom { transform: rotateX(-90deg) translateZ(calc(var(--die) / 2)); }
+
+/* 주사위 눈(점) — 살짝 파인(engraved) 느낌 */
+.pip {
+  width: 21%;
+  height: 21%;
+  border-radius: 999px;
+  background: radial-gradient(circle at 36% 30%, #524d45, var(--pip) 68%);
+  box-shadow: inset 0 1px 1.5px rgba(0, 0, 0, 0.55), 0 0.5px 0 rgba(255, 255, 255, 0.45);
+  align-self: center;
+  justify-self: center;
+}
+.pip.one {
+  background: radial-gradient(circle at 36% 30%, #6a655c, var(--pip-one) 68%);
+}
+
+/* 접지 그림자 (부드럽게) */
+.die-shadow {
+  position: absolute;
+  left: 50%;
+  bottom: -9px;
+  width: 84%;
+  height: 14px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at center, rgba(20, 15, 10, 0.32), transparent 72%);
+  filter: blur(4px);
+  z-index: -1;
+}
+
+/* =============================================================
+   트레이 (원목 테두리 + 청록 펠트) — 3D 시점
+   ============================================================= */
+.tray-scene {
+  perspective: 1000px;
+}
+.tray-felt {
+  transform: rotateX(24deg); /* 테이블을 비스듬히 내려다보는 각 (제일 예쁜 값으로 튜닝) */
+  transform-style: preserve-3d;
+  transform-origin: center 70%;
+}
+
+/* 리액션 이모지 떠오르기 */
+@keyframes reaction-float {
+  0% { transform: translateY(0) scale(0.6); opacity: 0; }
+  20% { opacity: 1; }
+  100% { transform: translateY(-90px) scale(1.25); opacity: 0; }
+}
+.animate-reaction {
+  animation: reaction-float 1.1s ease-out forwards;
+}
+
+/* 킵 선반으로 슬라이드 */
+@keyframes keep-slide {
+  0% { transform: translateY(12px) scale(0.9); opacity: 0.3; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+.animate-keep-slide {
+  animation: keep-slide 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+
+/* 문구 팝업(핑퐁 스매시/퍼펙트 등) */
+@keyframes combo-pop {
+  0% { transform: scale(0.4) rotate(-8deg); opacity: 0; }
+  35% { transform: scale(1.15) rotate(3deg); opacity: 1; }
+  60% { transform: scale(0.98) rotate(0deg); }
+  80% { opacity: 1; }
+  100% { transform: scale(1.02); opacity: 0; }
+}
+.animate-combo-pop {
+  animation: combo-pop 0.85s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* 콤보 카운터: 팝 후 유지(다음 콤보에 리마운트되며 다시 팝). */
+@keyframes combo-hit {
+  0% { transform: scale(1.7); opacity: 0; }
+  35% { transform: scale(1.12); opacity: 1; }
+  70% { transform: scale(0.97); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-combo-hit {
+  animation: combo-hit 0.34s cubic-bezier(0.2, 0.85, 0.25, 1) both;
+}
+
+/* 반응속도 배틀: 신호("지금!")가 터지듯 나타나는 팝 */
+@keyframes signal-pop {
+  0% { transform: scale(0.3); opacity: 0; }
+  40% { transform: scale(1.25); opacity: 1; }
+  60% { transform: scale(0.95); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-signal-pop {
+  animation: signal-pop 0.28s cubic-bezier(0.2, 0.9, 0.2, 1.2) both;
+}
+
+/* 반응속도 배틀 메뉴: 번개 아이콘 느린 맥동 */
+@keyframes pulse-slow {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+.animate-pulse-slow {
+  animation: pulse-slow 1.8s ease-in-out infinite;
+}
+
+/* 접근성: 모션 최소화 설정이면 굴리기/떠오르기 애니메이션 생략 */
+@media (prefers-reduced-motion: reduce) {
+  .animate-reaction,
+  .animate-keep-slide,
+  .animate-combo-pop,
+  .animate-combo-hit,
+  .animate-signal-pop,
+  .animate-pulse-slow {
+    animation: none;
+  }
+}
