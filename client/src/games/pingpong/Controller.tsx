@@ -170,7 +170,8 @@ export default function Controller({ initialCode }: ControllerProps) {
         n.has = true
       }
       const x = clamp01(0.5 + (e.gamma - n.g) / (2 * SENS))
-      const y = clamp01(0.5 + (e.beta - BETA_CENTER) / (2 * BETA_SENS))
+      // 상하 반전: 폰 위로 들면 검도 위로 (y 는 위가 0)
+      const y = clamp01(0.5 - (e.beta - BETA_CENTER) / (2 * BETA_SENS))
       const now = Date.now()
       if (now - lastAim.current < 28) return // ~35Hz 스로틀
       lastAim.current = now
