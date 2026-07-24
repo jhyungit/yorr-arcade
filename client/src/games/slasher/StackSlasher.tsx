@@ -27,6 +27,7 @@ import {
   gravity,
   isGone,
   makeSparks,
+  pointSegDist,
   segHitsObject,
   sliceObject,
   spawnInterval,
@@ -130,6 +131,13 @@ function makeRuntime(): Runtime {
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
 const comboColor = (n: number) => (n >= 4 ? '#ec4899' : n >= 3 ? '#a855f7' : '#22d3ee')
 
+// 시작 화면의 'START' 슬래시 타깃 (상단 중앙). 폰 모션 블레이드로 이걸 베면 시작.
+const startTarget = (w: number, h: number) => ({
+  x: w / 2,
+  y: h * 0.26,
+  r: Math.max(52, Math.min(w, h) * 0.15),
+})
+
 export default function StackSlasher({ onExit }: { onExit: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -143,6 +151,9 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
   const upRef = useRef<() => void>(() => {})
   // 폰 모션 조준(ctrl:aim) 상태: 최신/직전 위치 + 스트로크 진행 여부
   const aimRef = useRef({ x: 0, y: 0, px: 0, py: 0, t: 0, moving: false, has: false })
+  // 폰 모션 컨트롤러가 조준 중인가 (렌더 루프용 ref + 오버레이 전환용 state)
+  const motionRef = useRef(false)
+  const [motionMode, setMotionMode] = useState(false)
 
   const [ui, setUi] = useState({
     phase: 'ready' as Phase,
@@ -455,11 +466,39 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
       }
       ctx.globalAlpha = 1
 
+      // 시작 화면(폰 모션 모드): 상단 START 타깃 — 블레이드로 베면 시작
+      if (g.phase === 'ready' && motionRef.current) {
+        const t = startTarget(w, h)
+        const pulse = 0.5 + 0.5 * Math.sin(now / 300)
+        ctx.save()
+        ctx.translate(t.x, t.y)
+        // 글로우 링
+        ctx.globalAlpha = 0.5 + pulse * 0.4
+        ctx.strokeStyle = BLADE_A
+        ctx.lineWidth = 4
+        ctx.shadowColor = BLADE_A
+        ctx.shadowBlur = 22
+        ctx.beginPath()
+        ctx.arc(0, 0, t.r, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.globalAlpha = 1
+        ctx.shadowBlur = 0
+        ctx.fillStyle = '#ffffff'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.font = `900 ${Math.round(t.r * 0.5)}px system-ui, sans-serif`
+        ctx.fillText('START', 0, 0)
+        ctx.font = `700 ${Math.round(t.r * 0.2)}px system-ui, sans-serif`
+        ctx.fillStyle = 'rgba(180,210,255,0.8)'
+        ctx.fillText('← 베면 시작', 0, t.r * 0.62)
+        ctx.restore()
+      }
+
       // 블레이드 잔상
       drawTrail(ctx, g.trail)
 
-      // 폰 모션 조준 리티클 (최근 조준 좌표가 있으면 블레이드 끝 위치를 표시)
-      if (g.phase === 'playing' && now - aimRef.current.t < 500) {
+      // 폰 모션 조준 리티클 (최근 조준값이 있으면 = 모션 입력 중이면 블레이드 끝 위치 표시)
+      if (now - aimRef.current.t < 500) {
         const a = aimRef.current
         ctx.save()
         ctx.globalAlpha = 0.9
@@ -590,7 +629,11 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
     const onAim = (d?: { x?: number; y?: number }) => {
       if (!d || typeof d.x !== 'number' || typeof d.y !== 'number') return
       const g = gameRef.current
-      if (g.phase !== 'playing') return
+      // 폰 모션 컨트롤러 감지 → 시작 화면을 "START 베기" 모드로 전환 (최초 1회만 state 갱신)
+      if (!motionRef.current) {
+        motionRef.current = true
+        setMotionMode(true)
+      }
       const x = d.x * g.w
       const y = d.y * g.h
       const a = aimRef.current
@@ -606,16 +649,23 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
       const dist = Math.hypot(x - a.px, y - a.py)
       const MIN = g.w * 0.01 // 이보다 느리면(정지/미세) 자르지 않음
       const MAXJUMP = g.w * 0.7 // 재정렬 등으로 튀는 큰 점프는 무시
-      if (dist >= MIN && dist <= MAXJUMP) {
+      const moving = dist >= MIN && dist <= MAXJUMP
+      if (moving) {
         if (!a.moving) {
-          downRef.current(a.px, a.py)
+          downRef.current(a.px, a.py) // 블레이드 스트로크 시작(트레일 생성)
           a.moving = true
         }
-        moveRef.current(x, y)
-      } else if (dist < MIN) {
-        if (a.moving) {
-          upRef.current()
+        moveRef.current(x, y) // 플레이 중이면 절단, 아니면 트레일만
+      } else if (dist < MIN && a.moving) {
+        upRef.current()
+        a.moving = false
+      }
+      // 시작 화면: 블레이드로 상단 START 타깃을 베면 게임 시작
+      if (g.phase === 'ready' && moving) {
+        const t = startTarget(g.w, g.h)
+        if (pointSegDist(a.px, a.py, x, y, t.x, t.y) <= t.r) {
           a.moving = false
+          startRef.current()
         }
       }
       a.px = x
@@ -693,8 +743,13 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
           <Hud score={ui.score} combo={ui.combo} timeSec={timeLeftSec} rush={rush} fever={ui.fever} />
         )}
 
-        {/* 시작 화면 */}
-        {ui.phase === 'ready' && <StartScreen best={best} onStart={startGame} />}
+        {/* 시작 화면 — 폰 모션 모드면 하단 안내만(위 START 타깃은 캔버스), 아니면 일반 버튼 */}
+        {ui.phase === 'ready' &&
+          (motionMode ? (
+            <MotionReady best={best} />
+          ) : (
+            <StartScreen best={best} onStart={startGame} />
+          ))}
 
         {/* 결과 화면 */}
         {ui.phase === 'result' && result && (
@@ -834,6 +889,25 @@ function Hud({
             {timeSec}
           </text>
         </svg>
+      </div>
+    </div>
+  )
+}
+
+// ── 시작 화면 (폰 모션 컨트롤러) — 위 START 는 캔버스, 여기선 하단 안내만 ──
+function MotionReady({ best }: { best: number }) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col items-center px-6 pb-10">
+      <div className="w-full max-w-sm rounded-2xl bg-black/65 border border-white/10 backdrop-blur-sm px-5 py-4 text-center">
+        <div className="text-lg font-black text-white">🗡️ 폰을 검처럼 들고!</div>
+        <p className="text-sm text-white/75 mt-2 leading-relaxed">
+          ① 편한 자세에서 폰의 <b className="text-white">🎯 가운데 세팅</b>
+          <br />② 위쪽 <b className="text-[#22d3ee]">START</b> 를 <b className="text-white">베면 시작!</b>{' '}
+          (3·2·1)
+        </p>
+        {best > 0 && (
+          <div className="text-xs text-white/45 mt-2">🏆 BEST {best.toLocaleString()}</div>
+        )}
       </div>
     </div>
   )

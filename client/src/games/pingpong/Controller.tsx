@@ -278,30 +278,32 @@ export default function Controller({ initialCode }: ControllerProps) {
                     폰을 <b className="text-white">레이저처럼 화면에 겨눠</b> 베세요. 겨누는 쪽으로
                     광선검이 움직여요. (빠르게 그을수록 잘 벰)
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      recenter()
-                      socket.emit('ctrl:slash', { x: 0.5, y: 0.5, t: 'down' })
-                      bump()
-                    }}
-                    className="w-full py-5 rounded-2xl font-black text-xl active:brightness-95"
-                    style={{ background: accent, boxShadow: `0 8px 24px ${accent}55` }}
-                  >
-                    🗡️ 베기 시작 / 다시
-                  </button>
-                  <div className="mt-5 text-6xl animate-pulse-slow">🗡️</div>
-                  <p className="text-white/40 text-xs mt-2 text-center">
-                    폰을 <b className="text-white/60">거의 눕혀</b> 편하게 들고, 화면의 로고를 겨눠
-                    좌우로 <b className="text-white/60">돌리고</b> 상하로 <b className="text-white/60">까딱</b>여 그어요.
-                  </p>
-                  {/* 중앙 재정렬 — 큼직한 버튼으로, 시작 버튼과 충분히 띄움 (탭 잘 되게) */}
+                  {/* ① 가운데 세팅 — 편한 자세에서 눌러 겨눔 기준을 정중앙으로 */}
                   <button
                     type="button"
                     onClick={recenter}
-                    className="mt-8 w-full py-3.5 rounded-2xl font-bold text-base text-white/90 border border-white/25 bg-white/10 active:bg-white/25 active:scale-95 transition"
+                    className="w-full py-5 rounded-2xl font-black text-xl active:brightness-95"
+                    style={{ background: accent, boxShadow: `0 8px 24px ${accent}55` }}
                   >
-                    🎯 중앙 재정렬 (지금 겨눈 방향을 가운데로)
+                    🎯 가운데 세팅
+                  </button>
+                  <p className="text-white/50 text-xs mt-3 text-center leading-relaxed">
+                    편한 자세에서 <b className="text-white/70">가운데 세팅</b> 후,
+                    <br />
+                    노트북 위쪽 <b className="text-[#22d3ee]">START</b> 를 <b className="text-white/70">베면 시작!</b>{' '}
+                    (3·2·1)
+                  </p>
+                  <div className="mt-5 text-6xl animate-pulse-slow">🗡️</div>
+                  {/* ② 폴백: 버튼으로 바로 시작/다시 (결과화면에서 재시작할 때도 사용) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      socket.emit('ctrl:slash', { x: 0.5, y: 0.5, t: 'down' })
+                      bump()
+                    }}
+                    className="mt-6 w-full py-3.5 rounded-2xl font-bold text-base text-white/90 border border-white/25 bg-white/10 active:bg-white/25 active:scale-95 transition"
+                  >
+                    ▶ 바로 시작 / 다시하기
                   </button>
                 </>
               )}
