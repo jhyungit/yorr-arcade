@@ -152,23 +152,25 @@ export default function Controller({ initialCode }: ControllerProps) {
     setMotionOn(true)
   }
 
-  // 슬래셔 조준 스트리밍: 폰 기울기(gamma=좌우, beta=상하)를 정규화 좌표로 노트북에 전송.
-  //  중립(기준) 자세 대비 상대 기울기 → SENS 도 만큼 기울이면 화면 끝. (작을수록 민감)
+  // 슬래셔 조준 스트리밍: 폰 기울기를 정규화 좌표로 노트북에 전송.
+  //  - 좌우(x): gamma 를 "베기 시작 때 자세" 기준(상대)으로 → 어느 방향을 보고 있든 편함
+  //  - 상하(y): beta 를 "땅 기준 고정 각도(BETA_CENTER)"로 → 폰을 거의 눕혀 들어도 중앙
+  //    (예전엔 버튼 누른 순간의 세운 자세가 중앙이라 계속 세워야 했음)
   useEffect(() => {
     if (!(tiltOn && isSlasher && joined)) return
-    const SENS = 26 // 화면 절반을 채우는 기울기 각도(도) — 감도, 실기기에서 조정
+    const SENS = 26 // 좌우 감도: 화면 절반을 채우는 기울기 각도(도)
+    const BETA_CENTER = 20 // 세로 중앙에 대응하는 폰 기울기(도). 0=수평, 90=수직. 낮을수록 눕혀서 플레이
+    const BETA_SENS = 26 // 상하 감도
     const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
     const onOrient = (e: DeviceOrientationEvent) => {
       if (e.gamma == null || e.beta == null) return
       const n = tiltNeutral.current
       if (!n.has) {
-        n.g = e.gamma
-        n.b = e.beta
+        n.g = e.gamma // 좌우만 지금 자세를 기준으로 캡처 (세로는 고정 기준 사용)
         n.has = true
-        return
       }
       const x = clamp01(0.5 + (e.gamma - n.g) / (2 * SENS))
-      const y = clamp01(0.5 + (e.beta - n.b) / (2 * SENS))
+      const y = clamp01(0.5 + (e.beta - BETA_CENTER) / (2 * BETA_SENS))
       const now = Date.now()
       if (now - lastAim.current < 28) return // ~35Hz 스로틀
       lastAim.current = now
@@ -274,7 +276,8 @@ export default function Controller({ initialCode }: ControllerProps) {
                   </button>
                   <div className="mt-6 text-6xl animate-pulse-slow">🗡️</div>
                   <p className="text-white/40 text-xs mt-3 text-center">
-                    폰을 세워 들고 손목으로 좌우·상하로 그어보세요.
+                    폰을 <b className="text-white/60">거의 눕혀</b>(수평에 살짝 기운 정도) 편하게 들고,
+                    손목으로 좌우·상하로 그어보세요.
                   </p>
                 </>
               )}
