@@ -40,6 +40,14 @@ const CARDS: GameCard[] = [
     gradient: 'linear-gradient(160deg, #f59e0b 0%, #ef4444 60%, #7f1d1d 100%)',
     playable: true,
   },
+  {
+    id: 'slasher',
+    title: '기술스택 슬래셔',
+    desc: '날아오는 기술 로고를 광선검으로 베기! 60초 타임어택 · 개발자 유형 판정.',
+    emoji: '🗡️',
+    gradient: 'linear-gradient(160deg, #0891b2 0%, #22d3ee 45%, #e935c1 100%)',
+    playable: true,
+  },
 ]
 
 const STEP = 250 // 카드 간 이동 거리(px)

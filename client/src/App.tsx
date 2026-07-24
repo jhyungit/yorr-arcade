@@ -4,6 +4,7 @@ import PingPong from './games/pingpong/PingPong'
 import Controller from './games/pingpong/Controller'
 import RhythmTap from './games/rhythm/RhythmTap'
 import ReactionBattle from './games/reaction/ReactionBattle'
+import StackSlasher from './games/slasher/StackSlasher'
 import { socket } from './net/socket'
 
 /**
@@ -16,7 +17,7 @@ import { socket } from './net/socket'
  * 게임들이 그 연결(phoneConnected)을 물려받아 쓴다.
  * (요트 다이스/멀티플레이 코드는 남겨뒀지만 지금은 라우팅하지 않음)
  */
-type GameId = 'pingpong' | 'rhythm' | 'reaction'
+type GameId = 'pingpong' | 'rhythm' | 'reaction' | 'slasher'
 
 export default function App() {
   const params = new URLSearchParams(window.location.search)
@@ -77,6 +78,10 @@ function Main() {
     // 반응속도(퀵드로우): 폰에서 직접 해도 되고, 노트북=신호화면 + 폰=휘두르기(컨트롤러)로도 가능
     return <ReactionBattle onExit={() => setGame(null)} phoneConnected={phoneConnected} />
   }
+  if (game === 'slasher') {
+    // 기술스택 슬래셔: 완전 클라이언트 사이드(터치/마우스 스와이프). 폰 컨트롤러 불필요.
+    return <StackSlasher onExit={() => setGame(null)} />
+  }
 
   return (
     <GameHub
@@ -84,6 +89,7 @@ function Main() {
         if (id === 'pingpong') setGame('pingpong')
         else if (id === 'rhythm') setGame('rhythm')
         else if (id === 'reaction') setGame('reaction')
+        else if (id === 'slasher') setGame('slasher')
       }}
       onController={() => {
         // 이 폰을 "다른 화면의 컨트롤러"로 (새로고침하며 ?ctrl 진입)
