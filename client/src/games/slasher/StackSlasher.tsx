@@ -141,6 +141,8 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
   const downRef = useRef<(x: number, y: number) => void>(() => {})
   const moveRef = useRef<(x: number, y: number) => void>(() => {})
   const upRef = useRef<() => void>(() => {})
+  // 폰 모션 조준(ctrl:aim) 상태: 최신/직전 위치 + 스트로크 진행 여부
+  const aimRef = useRef({ x: 0, y: 0, px: 0, py: 0, t: 0, moving: false, has: false })
 
   const [ui, setUi] = useState({
     phase: 'ready' as Phase,
@@ -295,6 +297,9 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
       g.trail = []
       g.shake = 0
       g.flash = 0
+      // 모션 조준 상태 초기화 (직전 위치 스테일로 첫 스트로크가 튀지 않게)
+      aimRef.current.has = false
+      aimRef.current.moving = false
       setResult(null)
       commit()
     }
@@ -453,6 +458,25 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
       // 블레이드 잔상
       drawTrail(ctx, g.trail)
 
+      // 폰 모션 조준 리티클 (최근 조준 좌표가 있으면 블레이드 끝 위치를 표시)
+      if (g.phase === 'playing' && now - aimRef.current.t < 500) {
+        const a = aimRef.current
+        ctx.save()
+        ctx.globalAlpha = 0.9
+        ctx.strokeStyle = BLADE_A
+        ctx.lineWidth = 2
+        ctx.shadowColor = BLADE_A
+        ctx.shadowBlur = 10
+        ctx.beginPath()
+        ctx.arc(a.x, a.y, 13, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.fillStyle = '#ffffff'
+        ctx.beginPath()
+        ctx.arc(a.x, a.y, 3, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.restore()
+      }
+
       // 카운트인 3·2·1
       if (g.phase === 'playing' && songTime < 0) {
         const n = clamp(Math.ceil(-songTime / (LEAD_IN_MS / 3)), 1, 3)
@@ -557,6 +581,49 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
     socket.on('ctrl:slash', onSlash)
     return () => {
       socket.off('ctrl:slash', onSlash)
+    }
+  }, [])
+
+  // 폰 모션 조준: 기울기 좌표(0~1)를 블레이드 위치로. 충분히 빠르게 움직이면 그 구간을 벤다.
+  //  (가만히 두면 자르지 않음 → "폰을 휘둘러야 베인다". 스트로크가 끊기면 새 콤보로 시작)
+  useEffect(() => {
+    const onAim = (d?: { x?: number; y?: number }) => {
+      if (!d || typeof d.x !== 'number' || typeof d.y !== 'number') return
+      const g = gameRef.current
+      if (g.phase !== 'playing') return
+      const x = d.x * g.w
+      const y = d.y * g.h
+      const a = aimRef.current
+      a.x = x
+      a.y = y
+      a.t = performance.now()
+      if (!a.has) {
+        a.has = true
+        a.px = x
+        a.py = y
+        return
+      }
+      const dist = Math.hypot(x - a.px, y - a.py)
+      const MIN = g.w * 0.01 // 이보다 느리면(정지/미세) 자르지 않음
+      const MAXJUMP = g.w * 0.7 // 재정렬 등으로 튀는 큰 점프는 무시
+      if (dist >= MIN && dist <= MAXJUMP) {
+        if (!a.moving) {
+          downRef.current(a.px, a.py)
+          a.moving = true
+        }
+        moveRef.current(x, y)
+      } else if (dist < MIN) {
+        if (a.moving) {
+          upRef.current()
+          a.moving = false
+        }
+      }
+      a.px = x
+      a.py = y
+    }
+    socket.on('ctrl:aim', onAim)
+    return () => {
+      socket.off('ctrl:aim', onAim)
     }
   }, [])
 

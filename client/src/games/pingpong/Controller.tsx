@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { socket } from '../../net/socket'
 import { useSwing } from './useSwing'
 import { canVibrate } from '../../lib/feedback'
@@ -26,12 +26,15 @@ export default function Controller({ initialCode }: ControllerProps) {
   const [player, setPlayer] = useState(1)
   const [error, setError] = useState<string | null>(null)
   const [motionOn, setMotionOn] = useState(false)
+  const [tiltOn, setTiltOn] = useState(false) // 슬래셔: 폰 기울기(모션)로 블레이드 조준 켜짐
   // 노트북(화면)이 disp:game 으로 알려줌. 게임 선택 전엔 'idle'(대기).
   const [game, setGame] = useState<'idle' | 'pingpong' | 'rhythm' | 'reaction' | 'slasher'>('idle')
   const swings = useRef(0)
   const [count, setCount] = useState(0)
   const playerRef = useRef(1)
-  const padDown = useRef(false) // 슬래셔 터치패드: 손가락이 닿아있는지
+  // 슬래셔 조준: 중립(기준) 기울기 + 마지막 전송 시각(스로틀)
+  const tiltNeutral = useRef<{ b: number; g: number; has: boolean }>({ b: 0, g: 0, has: false })
+  const lastAim = useRef(0)
   const isRhythm = game === 'rhythm'
   const isReaction = game === 'reaction'
   const isSlasher = game === 'slasher'
@@ -46,27 +49,33 @@ export default function Controller({ initialCode }: ControllerProps) {
           ? '#64748b'
           : '#2b8fe0'
 
-  // 슬래셔: 폰을 터치패드로 → 손가락 위치를 정규화(0~1) 좌표로 노트북에 보냄
-  const sendSlash = (e: ReactPointerEvent, t: 'down' | 'move' | 'up') => {
-    const r = e.currentTarget.getBoundingClientRect()
-    const x = (e.clientX - r.left) / r.width
-    const y = (e.clientY - r.top) / r.height
-    if (t === 'down') {
-      padDown.current = true
-      e.currentTarget.setPointerCapture?.(e.pointerId)
-      bump()
-    } else if (t === 'move') {
-      if (!padDown.current) return
-    } else {
-      padDown.current = false
-    }
-    socket.emit('ctrl:slash', { x, y, t })
-  }
-
-  // 스윙 횟수 카운트만 (화면 펄스 없음)
+  // 스윙/그음 횟수 카운트
   const bump = () => {
     swings.current += 1
     setCount(swings.current)
+  }
+
+  // ── 슬래셔 모션 조준: 폰 기울기(deviceorientation) 권한 요청 + 켜기 ──
+  const enableTilt = async () => {
+    try {
+      const DOE = DeviceOrientationEvent as unknown as {
+        requestPermission?: () => Promise<'granted' | 'denied'>
+      }
+      if (typeof DOE?.requestPermission === 'function') {
+        const res = await DOE.requestPermission()
+        if (res !== 'granted') {
+          setError('센서 권한이 필요해요. 브라우저에서 동작/방향 접근을 허용해 주세요.')
+          return
+        }
+      }
+    } catch {
+      /* 방향센서 불가 환경 — 무시 */
+    }
+    tiltNeutral.current.has = false // 켤 때 지금 자세를 화면 중앙으로
+    setTiltOn(true)
+  }
+  const recenter = () => {
+    tiltNeutral.current.has = false
   }
 
   const { permission, requestPermission } = useSwing({
@@ -142,6 +151,32 @@ export default function Controller({ initialCode }: ControllerProps) {
     setMotionOn(true)
   }
 
+  // 슬래셔 조준 스트리밍: 폰 기울기(gamma=좌우, beta=상하)를 정규화 좌표로 노트북에 전송.
+  //  중립(기준) 자세 대비 상대 기울기 → SENS 도 만큼 기울이면 화면 끝. (작을수록 민감)
+  useEffect(() => {
+    if (!(tiltOn && isSlasher && joined)) return
+    const SENS = 26 // 화면 절반을 채우는 기울기 각도(도) — 감도, 실기기에서 조정
+    const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
+    const onOrient = (e: DeviceOrientationEvent) => {
+      if (e.gamma == null || e.beta == null) return
+      const n = tiltNeutral.current
+      if (!n.has) {
+        n.g = e.gamma
+        n.b = e.beta
+        n.has = true
+        return
+      }
+      const x = clamp01(0.5 + (e.gamma - n.g) / (2 * SENS))
+      const y = clamp01(0.5 + (e.beta - n.b) / (2 * SENS))
+      const now = Date.now()
+      if (now - lastAim.current < 28) return // ~35Hz 스로틀
+      lastAim.current = now
+      socket.emit('ctrl:aim', { x, y })
+    }
+    window.addEventListener('deviceorientation', onOrient)
+    return () => window.removeEventListener('deviceorientation', onOrient)
+  }, [tiltOn, isSlasher, joined])
+
   return (
     <div className="fixed inset-0 flex flex-col items-center bg-[#0a0e16] text-white px-6 py-8 select-none">
       <div className="label-mono text-white/50">
@@ -197,32 +232,51 @@ export default function Controller({ initialCode }: ControllerProps) {
           </p>
 
           {isSlasher ? (
-            // ── 슬래셔: 폰 화면을 터치패드로 (그으면 노트북 광선검이 따라 벰) ──
+            // ── 슬래셔: 폰을 검처럼 들고 휘둘러 조준(모션). 화면 스와이프 아님! ──
             <div className="w-full flex flex-col items-center">
-              <p className="text-white/60 text-sm text-center mb-3">
-                노트북 화면을 보며, <b className="text-white">여기를 손가락으로 그어</b> 로고를 베세요!
-                <br />첫 터치로 <b className="text-white">시작</b>도 됩니다.
-              </p>
-              <div
-                className="w-full touch-none rounded-3xl flex items-center justify-center text-center active:brightness-110"
-                style={{
-                  height: '58vh',
-                  background: `linear-gradient(160deg, ${accent}22, #0a0e1633)`,
-                  border: `2px dashed ${accent}`,
-                }}
-                onPointerDown={(e) => {
-                  e.preventDefault()
-                  sendSlash(e, 'down')
-                }}
-                onPointerMove={(e) => sendSlash(e, 'move')}
-                onPointerUp={(e) => sendSlash(e, 'up')}
-                onPointerCancel={(e) => sendSlash(e, 'up')}
-              >
-                <span className="text-white/50 text-sm px-6 pointer-events-none">
-                  🗡️ 이 영역을 <b className="text-white">쓱쓱</b> 그어 베기
-                  <br />총 {count}번 그음
-                </span>
-              </div>
+              {!tiltOn ? (
+                <>
+                  <p className="text-white/70 text-sm text-center mb-4">
+                    폰을 <b className="text-white">검처럼 들고 휘둘러</b> 노트북 화면의 로고를 베는
+                    게임이에요. 먼저 센서를 켜세요.
+                  </p>
+                  <button
+                    onClick={enableTilt}
+                    className="w-full py-4 rounded-2xl active:brightness-95 font-bold text-lg"
+                    style={{ background: accent }}
+                  >
+                    🗡️ 센서 켜고 검 들기
+                  </button>
+                  <p className="text-white/40 text-xs mt-3">
+                    아이폰은 "동작·방향 접근" 팝업을 허용해 주세요.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-white/60 text-sm text-center mb-4">
+                    노트북을 보며 <b className="text-white">폰을 휘둘러</b> 베세요. 기울인 쪽으로
+                    광선검이 움직여요. (빠르게 그을수록 잘 벰)
+                  </p>
+                  <button
+                    onClick={() => {
+                      recenter()
+                      socket.emit('ctrl:slash', { x: 0.5, y: 0.5, t: 'down' })
+                      bump()
+                    }}
+                    className="w-full py-5 rounded-2xl font-black text-xl active:brightness-95"
+                    style={{ background: accent, boxShadow: `0 8px 24px ${accent}55` }}
+                  >
+                    🗡️ 베기 시작 / 다시
+                  </button>
+                  <button onClick={recenter} className="mt-4 text-sm text-white/60 underline">
+                    중앙 재정렬 (지금 자세를 가운데로)
+                  </button>
+                  <div className="mt-6 text-6xl animate-pulse-slow">🗡️</div>
+                  <p className="text-white/40 text-xs mt-3 text-center">
+                    폰을 세워 들고 손목으로 좌우·상하로 그어보세요.
+                  </p>
+                </>
+              )}
             </div>
           ) : permission !== 'granted' ? (
             <>
