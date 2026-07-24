@@ -40,6 +40,7 @@ import { drawGlyph, objectColor } from './logos'
 import { STACKS_BY_CATEGORY, CATEGORIES } from './stacks'
 import { categoryCounts, decideVerdict } from './verdict'
 import { canVibrate } from '../../lib/feedback'
+import { socket } from '../../net/socket'
 
 /**
  * StackSlasher — 기술스택 슬래셔 (Fruit-Ninja 감성, 완전 클라이언트)
@@ -534,6 +535,29 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
     const engine = new Fx()
     audioRef.current = engine
     return () => engine.dispose()
+  }, [])
+
+  // 폰 컨트롤러(터치패드) 연동: 폰에서 그은 좌표(정규화 0~1)로 노트북 블레이드를 구동.
+  //  준비/결과 화면에선 첫 터치가 게임 시작/재시작 버튼 역할을 한다.
+  useEffect(() => {
+    const onSlash = (d?: { x?: number; y?: number; t?: 'down' | 'move' | 'up' }) => {
+      if (!d || typeof d.x !== 'number' || typeof d.y !== 'number') return
+      const g = gameRef.current
+      if (d.t === 'down' && g.phase !== 'playing') {
+        startRef.current()
+        return
+      }
+      if (g.phase !== 'playing') return
+      const x = d.x * g.w
+      const y = d.y * g.h
+      if (d.t === 'down') downRef.current(x, y)
+      else if (d.t === 'move') moveRef.current(x, y)
+      else upRef.current()
+    }
+    socket.on('ctrl:slash', onSlash)
+    return () => {
+      socket.off('ctrl:slash', onSlash)
+    }
   }, [])
 
   const rel = (e: ReactPointerEvent) => {

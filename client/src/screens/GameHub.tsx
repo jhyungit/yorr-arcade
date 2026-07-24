@@ -214,14 +214,7 @@ export default function GameHub({
                 🎮 {phoneCount}대 연결됨
               </span>
             </div>
-            <div className="text-[11px] text-[var(--ink-2)] text-center">
-              폰에서 <b className="text-[var(--ink)]">🎮 컨트롤러로 쓰기</b> → 이 코드 입력 (여러 대 OK)
-            </div>
             <div className="text-4xl font-black tracking-[0.3em] text-[var(--coral)] text-center my-1">
-              {pairCode}
-            </div>
-            <div className="text-[10px] text-[var(--ink-3)] break-all text-center">
-              또는 폰에서 열기: {typeof window !== 'undefined' ? window.location.host : ''}/?ctrl=
               {pairCode}
             </div>
             <div className="mt-2 pt-2 border-t border-[var(--line)] text-center text-xs">

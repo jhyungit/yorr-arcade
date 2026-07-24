@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { socket } from '../../net/socket'
 import { useSwing } from './useSwing'
 import { canVibrate } from '../../lib/feedback'
@@ -27,14 +27,41 @@ export default function Controller({ initialCode }: ControllerProps) {
   const [error, setError] = useState<string | null>(null)
   const [motionOn, setMotionOn] = useState(false)
   // 노트북(화면)이 disp:game 으로 알려줌. 게임 선택 전엔 'idle'(대기).
-  const [game, setGame] = useState<'idle' | 'pingpong' | 'rhythm' | 'reaction'>('idle')
+  const [game, setGame] = useState<'idle' | 'pingpong' | 'rhythm' | 'reaction' | 'slasher'>('idle')
   const swings = useRef(0)
   const [count, setCount] = useState(0)
   const playerRef = useRef(1)
+  const padDown = useRef(false) // 슬래셔 터치패드: 손가락이 닿아있는지
   const isRhythm = game === 'rhythm'
   const isReaction = game === 'reaction'
+  const isSlasher = game === 'slasher'
   const isIdle = game === 'idle'
-  const accent = isRhythm ? '#a855f7' : isReaction ? '#f59e0b' : isIdle ? '#64748b' : '#2b8fe0'
+  const accent = isRhythm
+    ? '#a855f7'
+    : isReaction
+      ? '#f59e0b'
+      : isSlasher
+        ? '#22d3ee'
+        : isIdle
+          ? '#64748b'
+          : '#2b8fe0'
+
+  // 슬래셔: 폰을 터치패드로 → 손가락 위치를 정규화(0~1) 좌표로 노트북에 보냄
+  const sendSlash = (e: ReactPointerEvent, t: 'down' | 'move' | 'up') => {
+    const r = e.currentTarget.getBoundingClientRect()
+    const x = (e.clientX - r.left) / r.width
+    const y = (e.clientY - r.top) / r.height
+    if (t === 'down') {
+      padDown.current = true
+      e.currentTarget.setPointerCapture?.(e.pointerId)
+      bump()
+    } else if (t === 'move') {
+      if (!padDown.current) return
+    } else {
+      padDown.current = false
+    }
+    socket.emit('ctrl:slash', { x, y, t })
+  }
 
   // 스윙 횟수 카운트만 (화면 펄스 없음)
   const bump = () => {
@@ -122,12 +149,14 @@ export default function Controller({ initialCode }: ControllerProps) {
           ? '리듬 스윙 · 컨트롤러'
           : isReaction
             ? '반응속도 · 컨트롤러'
-            : isIdle
-              ? 'YORR · 컨트롤러'
-              : 'PING · PONG · 컨트롤러'}
+            : isSlasher
+              ? '스택 슬래셔 · 컨트롤러'
+              : isIdle
+                ? 'YORR · 컨트롤러'
+                : 'PING · PONG · 컨트롤러'}
       </div>
       <div className="text-5xl mt-3 mb-1">
-        {isRhythm ? '🥁' : isReaction ? '⚡' : isIdle ? '🎮' : '🏓'}
+        {isRhythm ? '🥁' : isReaction ? '⚡' : isSlasher ? '🗡️' : isIdle ? '🎮' : '🏓'}
       </div>
 
       {!joined ? (
@@ -160,12 +189,42 @@ export default function Controller({ initialCode }: ControllerProps) {
               ? '🥁 리듬 컨트롤러'
               : isReaction
                 ? `⚡ 반응 컨트롤러 · P${player}`
-                : isIdle
-                  ? `게임 선택을 기다리는 중… (P${player})`
-                  : `플레이어 ${player}`}
+                : isSlasher
+                  ? '🗡️ 슬래셔 터치패드'
+                  : isIdle
+                    ? `게임 선택을 기다리는 중… (P${player})`
+                    : `플레이어 ${player}`}
           </p>
 
-          {permission !== 'granted' ? (
+          {isSlasher ? (
+            // ── 슬래셔: 폰 화면을 터치패드로 (그으면 노트북 광선검이 따라 벰) ──
+            <div className="w-full flex flex-col items-center">
+              <p className="text-white/60 text-sm text-center mb-3">
+                노트북 화면을 보며, <b className="text-white">여기를 손가락으로 그어</b> 로고를 베세요!
+                <br />첫 터치로 <b className="text-white">시작</b>도 됩니다.
+              </p>
+              <div
+                className="w-full touch-none rounded-3xl flex items-center justify-center text-center active:brightness-110"
+                style={{
+                  height: '58vh',
+                  background: `linear-gradient(160deg, ${accent}22, #0a0e1633)`,
+                  border: `2px dashed ${accent}`,
+                }}
+                onPointerDown={(e) => {
+                  e.preventDefault()
+                  sendSlash(e, 'down')
+                }}
+                onPointerMove={(e) => sendSlash(e, 'move')}
+                onPointerUp={(e) => sendSlash(e, 'up')}
+                onPointerCancel={(e) => sendSlash(e, 'up')}
+              >
+                <span className="text-white/50 text-sm px-6 pointer-events-none">
+                  🗡️ 이 영역을 <b className="text-white">쓱쓱</b> 그어 베기
+                  <br />총 {count}번 그음
+                </span>
+              </div>
+            </div>
+          ) : permission !== 'granted' ? (
             <>
               <p className="text-white/70 text-sm text-center mb-4">
                 폰을 휘둘러 조종하려면 센서를 켜세요.
@@ -204,27 +263,31 @@ export default function Controller({ initialCode }: ControllerProps) {
             </p>
           )}
 
-          {/* 스윙 시각 피드백 + 탭 대체 버튼 */}
-          <button
-            onClick={() => {
-              socket.emit('ctrl:swing')
-              bump()
-            }}
-            className="mt-6 w-44 h-44 rounded-full flex items-center justify-center active:scale-95 transition-transform"
-            style={{ background: `${accent}33`, border: `2px solid ${accent}` }}
-          >
-            <span className="text-6xl">
-              {isRhythm ? '🥁' : isReaction ? '⚡' : isIdle ? '🎮' : '🏓'}
-            </span>
-          </button>
-          <p className="text-white/50 text-xs mt-4">
-            {isRhythm
-              ? '버튼을 눌러도 쳐집니다'
-              : isReaction
-                ? '버튼을 눌러도 반응됩니다'
-                : '버튼을 눌러도 스윙됩니다'}{' '}
-            · 총 {count}회
-          </p>
+          {/* 스윙 시각 피드백 + 탭 대체 버튼 (슬래셔는 터치패드라 제외) */}
+          {!isSlasher && (
+            <>
+              <button
+                onClick={() => {
+                  socket.emit('ctrl:swing')
+                  bump()
+                }}
+                className="mt-6 w-44 h-44 rounded-full flex items-center justify-center active:scale-95 transition-transform"
+                style={{ background: `${accent}33`, border: `2px solid ${accent}` }}
+              >
+                <span className="text-6xl">
+                  {isRhythm ? '🥁' : isReaction ? '⚡' : isIdle ? '🎮' : '🏓'}
+                </span>
+              </button>
+              <p className="text-white/50 text-xs mt-4">
+                {isRhythm
+                  ? '버튼을 눌러도 쳐집니다'
+                  : isReaction
+                    ? '버튼을 눌러도 반응됩니다'
+                    : '버튼을 눌러도 스윙됩니다'}{' '}
+                · 총 {count}회
+              </p>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -236,6 +236,11 @@ io.on('connection', (socket) => {
     if (pairCode) socket.to('pair:' + pairCode).emit('ctrl:swing', { player: pairPlayer })
   })
 
+  /** 폰 슬라이스(터치패드 좌표) → 노트북 슬래셔로 중계 ({x,y: 0~1 정규화, t:'down'|'move'|'up'}) */
+  socket.on('ctrl:slash', (data) => {
+    if (pairCode) socket.to('pair:' + pairCode).emit('ctrl:slash', { ...data, player: pairPlayer })
+  })
+
   /** 노트북 → 폰: 실제로 공을 맞춘 순간 진동/피드백 신호 중계 ({player, kind}) */
   socket.on('game:hit', (data) => {
     if (pairCode) socket.to('pair:' + pairCode).emit('ctrl:hit', data)

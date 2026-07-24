@@ -68,7 +68,9 @@ function Main() {
           ? 'rhythm'
           : game === 'reaction'
             ? 'reaction'
-            : 'idle'
+            : game === 'slasher'
+              ? 'slasher'
+              : 'idle'
     socket.emit('disp:game', { game: g })
   }, [game, phoneConnected])
 
