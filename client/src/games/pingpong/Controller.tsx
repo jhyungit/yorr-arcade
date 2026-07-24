@@ -103,9 +103,10 @@ export default function Controller({ initialCode }: ControllerProps) {
         d?.game === 'rhythm' ||
         d?.game === 'pingpong' ||
         d?.game === 'reaction' ||
+        d?.game === 'slasher' ||
         d?.game === 'idle'
       ) {
-        setGame(d.game as 'idle' | 'pingpong' | 'rhythm' | 'reaction')
+        setGame(d.game as 'idle' | 'pingpong' | 'rhythm' | 'reaction' | 'slasher')
       }
     }
     // 리듬: 매 박 신호 → 짧게 진동 (손으로 비트 느끼기)
