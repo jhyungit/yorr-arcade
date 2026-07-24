@@ -32,8 +32,14 @@ export default function Controller({ initialCode }: ControllerProps) {
   const swings = useRef(0)
   const [count, setCount] = useState(0)
   const playerRef = useRef(1)
-  // 슬래셔 조준: 중립(기준) 기울기 + 마지막 전송 시각(스로틀)
-  const tiltNeutral = useRef<{ b: number; g: number; has: boolean }>({ b: 0, g: 0, has: false })
+  // 슬래셔 조준: 중립(기준) 방위/기울기 + 마지막 전송 시각(스로틀)
+  //  a=alpha(yaw,좌우 포인팅) · g=gamma(roll, alpha 없을 때 폴백) · b=beta(미사용, 세로는 고정)
+  const tiltNeutral = useRef<{ a: number; b: number; g: number; has: boolean }>({
+    a: 0,
+    b: 0,
+    g: 0,
+    has: false,
+  })
   const lastAim = useRef(0)
   const isRhythm = game === 'rhythm'
   const isReaction = game === 'reaction'
@@ -152,24 +158,33 @@ export default function Controller({ initialCode }: ControllerProps) {
     setMotionOn(true)
   }
 
-  // 슬래셔 조준 스트리밍: 폰 기울기를 정규화 좌표로 노트북에 전송.
-  //  - 좌우(x): gamma 를 "베기 시작 때 자세" 기준(상대)으로 → 어느 방향을 보고 있든 편함
+  // 슬래셔 조준 스트리밍: 폰을 "레이저 포인터"처럼 화면에 겨눠 조준.
+  //  - 좌우(x): 폰을 좌우로 "돌려(yaw=alpha)" 겨눔 → 겨눈 방향으로 블레이드가 감 (기울이기 아님)
+  //             '베기 시작' 때 겨눈 방향이 중앙. (alpha 없으면 gamma 기울기로 폴백)
   //  - 상하(y): beta 를 "땅 기준 고정 각도(BETA_CENTER)"로 → 폰을 거의 눕혀 들어도 중앙
-  //    (예전엔 버튼 누른 순간의 세운 자세가 중앙이라 계속 세워야 했음)
   useEffect(() => {
     if (!(tiltOn && isSlasher && joined)) return
-    const SENS = 26 // 좌우 감도: 화면 절반을 채우는 기울기 각도(도)
-    const BETA_CENTER = 20 // 세로 중앙에 대응하는 폰 기울기(도). 0=수평, 90=수직. 낮을수록 눕혀서 플레이
+    const YAW_SENS = 26 // 좌우(포인팅) 감도: 이 각도(도)만큼 돌리면 화면 절반. 작을수록 민감
+    const BETA_CENTER = 20 // 세로 중앙에 대응하는 폰 기울기(도). 0=수평, 90=수직. 낮을수록 눕혀서
     const BETA_SENS = 26 // 상하 감도
     const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
     const onOrient = (e: DeviceOrientationEvent) => {
-      if (e.gamma == null || e.beta == null) return
+      if (e.beta == null) return
       const n = tiltNeutral.current
       if (!n.has) {
-        n.g = e.gamma // 좌우만 지금 자세를 기준으로 캡처 (세로는 고정 기준 사용)
+        n.a = e.alpha ?? 0
+        n.g = e.gamma ?? 0
         n.has = true
       }
-      const x = clamp01(0.5 + (e.gamma - n.g) / (2 * SENS))
+      // 좌우: 포인팅(yaw=alpha) 우선. alpha 없으면 기울기(gamma) 폴백.
+      let x: number
+      if (e.alpha != null) {
+        let d = e.alpha - n.a
+        d = ((d + 540) % 360) - 180 // -180~180 로 정규화(경계 넘어감 처리)
+        x = clamp01(0.5 - d / (2 * YAW_SENS)) // 부호: 오른쪽으로 겨누면 오른쪽. 반대면 부호 뒤집기
+      } else {
+        x = clamp01(0.5 + ((e.gamma ?? 0) - n.g) / (2 * YAW_SENS))
+      }
       // 상하 반전: 폰 위로 들면 검도 위로 (y 는 위가 0)
       const y = clamp01(0.5 - (e.beta - BETA_CENTER) / (2 * BETA_SENS))
       const now = Date.now()
@@ -258,7 +273,7 @@ export default function Controller({ initialCode }: ControllerProps) {
               ) : (
                 <>
                   <p className="text-white/60 text-sm text-center mb-4">
-                    노트북을 보며 <b className="text-white">폰을 휘둘러</b> 베세요. 기울인 쪽으로
+                    폰을 <b className="text-white">레이저처럼 화면에 겨눠</b> 베세요. 겨누는 쪽으로
                     광선검이 움직여요. (빠르게 그을수록 잘 벰)
                   </p>
                   <button
@@ -277,8 +292,8 @@ export default function Controller({ initialCode }: ControllerProps) {
                   </button>
                   <div className="mt-6 text-6xl animate-pulse-slow">🗡️</div>
                   <p className="text-white/40 text-xs mt-3 text-center">
-                    폰을 <b className="text-white/60">거의 눕혀</b>(수평에 살짝 기운 정도) 편하게 들고,
-                    손목으로 좌우·상하로 그어보세요.
+                    폰을 <b className="text-white/60">거의 눕혀</b> 편하게 들고, 화면의 로고를 겨눠
+                    좌우로 <b className="text-white/60">돌리고</b> 상하로 <b className="text-white/60">까딱</b>여 그어요.
                   </p>
                 </>
               )}
