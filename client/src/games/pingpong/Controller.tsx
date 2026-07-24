@@ -159,9 +159,9 @@ export default function Controller({ initialCode }: ControllerProps) {
             {isRhythm
               ? '🥁 리듬 컨트롤러'
               : isReaction
-                ? '⚡ 반응 컨트롤러'
+                ? `⚡ 반응 컨트롤러 · P${player}`
                 : isIdle
-                  ? '게임 선택을 기다리는 중…'
+                  ? `게임 선택을 기다리는 중… (P${player})`
                   : `플레이어 ${player}`}
           </p>
 

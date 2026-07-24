@@ -19,7 +19,7 @@ import MatchLobby from '../../net/MatchLobby'
  *  (온라인 1:1 은 별도 단계에서 추가)
  */
 
-type Mode = 'solo' | 'duo' | 'online-host' | 'online-guest'
+type Mode = 'solo' | 'duo' | 'duo-phone' | 'online-host' | 'online-guest'
 type Phase = 'menu' | 'waiting' | 'signal' | 'result' | 'over'
 
 const ROUNDS = 5 // solo 라운드 수
@@ -65,9 +65,14 @@ interface Machine {
 interface ReactionBattleProps {
   onExit: () => void
   phoneConnected?: boolean // 허브 연결된 폰: 노트북=신호화면 + 폰=휘두르기(solo)
+  phoneCount?: number // 연결된 폰 컨트롤러 수 (2대 이상이면 폰 버저 2인 대결 가능)
 }
 
-export default function ReactionBattle({ onExit, phoneConnected = false }: ReactionBattleProps) {
+export default function ReactionBattle({
+  onExit,
+  phoneConnected = false,
+  phoneCount = 0,
+}: ReactionBattleProps) {
   const m = useRef<Machine>({
     mode: 'solo',
     phase: 'menu',
@@ -191,6 +196,8 @@ export default function ReactionBattle({ onExit, phoneConnected = false }: React
           if (winner === 1) g.winsP1++
           else g.winsP2++
           g.last = { ms, winner, falseStart: false }
+          // 폰 2대 버저: 이긴 폰을 진동시켜 손맛 피드백
+          if (g.mode === 'duo-phone') socket.emit('game:hit', { player: winner, kind: 'react' })
         }
         if (canVibrate) navigator.vibrate(20)
         g.phase = 'result'
@@ -208,7 +215,8 @@ export default function ReactionBattle({ onExit, phoneConnected = false }: React
   const { permission, requestPermission } = useSwing({
     onSwing: () => {
       const g = m.current
-      if (g.mode !== 'duo') react(0)
+      // 로컬 기기 모션은 solo/online 에서만. duo(화면분할)·duo-phone(폰버저)은 제외.
+      if (g.mode !== 'duo' && g.mode !== 'duo-phone') react(0)
     },
     enabled: motionOn,
     threshold: 15,
@@ -247,8 +255,11 @@ export default function ReactionBattle({ onExit, phoneConnected = false }: React
   // 폰(컨트롤러) 휘두름 → 반응 (solo 전용: 노트북이 신호 화면, 폰이 휘두름).
   //  신호 전 휘두르면 부정출발, 신호 후면 반응 기록 — react() 가 phase 로 판단.
   useEffect(() => {
-    const onSwing = () => {
-      if (m.current.mode === 'solo') react(0)
+    const onSwing = (d?: { player?: number }) => {
+      const mode = m.current.mode
+      if (mode === 'solo') react(0)
+      // 폰 2대 버저: 어느 폰이 휘둘렀는지(player)로 P1/P2 반응 처리
+      else if (mode === 'duo-phone') react(d?.player === 2 ? 2 : 1)
     }
     socket.on('ctrl:swing', onSwing)
     return () => {
@@ -474,13 +485,14 @@ export default function ReactionBattle({ onExit, phoneConnected = false }: React
 
   // 메뉴에서 모드 선택 → (모션 모드면) 센서 권한 요청 후 시작.
   //  이 클릭이 "사용자 제스처"라서 iOS 동작센서·오디오 권한을 여기서 얻는다.
-  const begin = async (choice: 'solo' | 'duo' | 'online') => {
+  const begin = async (choice: 'solo' | 'duo' | 'duo-phone' | 'online') => {
     unlockAudio()
-    if (choice !== 'duo') {
-      // solo/online 은 폰 휘두르기 사용 → 권한 요청(안드로이드는 즉시 granted)
+    if (choice === 'solo' || choice === 'online') {
+      // solo/online 은 이 기기의 폰 휘두르기 사용 → 권한 요청(안드로이드는 즉시 granted)
       await requestPermission()
       setMotionOn(true)
     }
+    // duo(화면분할)·duo-phone(폰 2대 버저)은 이 기기 모션 불필요
     if (choice === 'online') setLobbyOpen(true)
     else startMode(choice)
   }
@@ -536,7 +548,12 @@ export default function ReactionBattle({ onExit, phoneConnected = false }: React
 
       {/* 본문 (모드별) */}
       {g.phase === 'menu' && (
-        <Menu onSelect={(mode) => begin(mode)} onOnline={() => begin('online')} />
+        <Menu
+          phoneCount={phoneCount}
+          onSelect={(mode) => begin(mode)}
+          onDuoPhone={() => begin('duo-phone')}
+          onOnline={() => begin('online')}
+        />
       )}
 
       {g.phase === 'over' &&
@@ -557,6 +574,8 @@ export default function ReactionBattle({ onExit, phoneConnected = false }: React
           <OnlinePlay machine={g} role={g.online} hint={reactHint} onReact={() => react(0)} />
         ) : g.mode === 'solo' ? (
           <SoloPlay machine={g} hint={reactHint} onReact={() => react(0)} />
+        ) : g.mode === 'duo-phone' ? (
+          <DuoPhonePlay machine={g} />
         ) : (
           <DuoPlay machine={g} onReact={react} />
         ))}
@@ -593,12 +612,17 @@ export default function ReactionBattle({ onExit, phoneConnected = false }: React
 
 // ── 메뉴 ──
 function Menu({
+  phoneCount,
   onSelect,
+  onDuoPhone,
   onOnline,
 }: {
+  phoneCount: number
   onSelect: (m: 'solo' | 'duo') => void
+  onDuoPhone: () => void
   onOnline: () => void
 }) {
+  const twoPhonesReady = phoneCount >= 2
   return (
     <div className="flex-1 flex flex-col items-center justify-center px-6">
       <div className="text-6xl mb-3 animate-pulse-slow">⚡</div>
@@ -621,6 +645,23 @@ function Menu({
         >
           🤠 혼자 · 뽑기 기록 도전
         </button>
+        {/* 폰 2대 버저 2인 대결 — 노트북=신호화면, 폰 2대가 버저 (멀티 컨트롤러) */}
+        <button
+          onClick={() => twoPhonesReady && onDuoPhone()}
+          disabled={!twoPhonesReady}
+          className={`px-6 py-4 rounded-2xl font-black text-lg border ${
+            twoPhonesReady
+              ? 'bg-white/10 active:bg-white/20 border-[#f59e0b]/40 text-[#fbbf24]'
+              : 'bg-white/5 border-white/10 text-white/40'
+          }`}
+        >
+          📱📱 2인 · 폰 2대 버저 대결 (5판 3선)
+          <span className="block text-xs font-semibold mt-0.5 opacity-90">
+            {twoPhonesReady
+              ? `폰 ${phoneCount}대 연결됨 · 시작!`
+              : `게임 선택 화면에서 폰 2대 연결 필요 (현재 ${phoneCount}대)`}
+          </span>
+        </button>
         <button
           onClick={onOnline}
           className="px-6 py-4 rounded-2xl font-black text-lg bg-white/10 active:bg-white/20 border border-[#f59e0b]/40 text-[#fbbf24]"
@@ -629,7 +670,7 @@ function Menu({
         </button>
         <button
           onClick={() => onSelect('duo')}
-          className="px-6 py-4 rounded-2xl font-bold text-base bg-white/8 active:bg-white/15 text-white/80"
+          className="px-6 py-3 rounded-2xl font-bold text-sm bg-white/8 active:bg-white/15 text-white/70"
         >
           🤜 2인 · 한 폰 나눠 탭 (위/아래)
         </button>
@@ -739,6 +780,61 @@ function DuoPlay({
         </span>
         <PanelContent phase={g.phase} last={g.last} player={2} hint={duoHint(2)} />
       </button>
+    </div>
+  )
+}
+
+// ── 폰 2대 버저 2인 플레이 (노트북=공유 신호 화면, 폰 2대가 버저) ──
+function DuoPhonePlay({ machine }: { machine: Machine }) {
+  const g = machine
+  const bg = panelBg(g.phase, g.last)
+  return (
+    <div
+      className="flex-1 w-full flex flex-col items-center justify-center transition-colors duration-100"
+      style={{ background: bg }}
+    >
+      {/* 점수 HUD: P1 : P2 */}
+      <div className="absolute top-14 flex items-center gap-3 pointer-events-none">
+        <span className="label-mono text-white/60">📱 P1</span>
+        <span className="text-2xl font-black tabular-nums text-white">{g.winsP1}</span>
+        <span className="text-white/30 font-black">:</span>
+        <span className="text-2xl font-black tabular-nums text-white">{g.winsP2}</span>
+        <span className="label-mono text-white/60">P2 📱</span>
+      </div>
+
+      {g.phase === 'waiting' && (
+        <div className="flex flex-col items-center pointer-events-none">
+          <div className="text-2xl font-black text-white/85">가만히…</div>
+          <div className="text-sm text-white/60 mt-1">🔴 초록이 되면 각자 폰을 휘둘러!</div>
+        </div>
+      )}
+      {g.phase === 'signal' && (
+        <div className="flex flex-col items-center pointer-events-none">
+          <div className="text-6xl font-black text-white animate-signal-pop drop-shadow-lg">지금!</div>
+          <div className="text-lg font-bold text-white/80 mt-1 tracking-widest">휘둘러!</div>
+        </div>
+      )}
+      {g.phase === 'result' && (
+        <div className="flex flex-col items-center pointer-events-none">
+          {g.last.falseStart ? (
+            <>
+              <div className="text-4xl font-black text-[#f87171]">부정출발! 🚫</div>
+              <div className="text-xl font-black text-[#4ade80] mt-2">P{g.last.winner} 승 🎉</div>
+            </>
+          ) : (
+            <>
+              <div className="text-4xl font-black text-[#4ade80]">P{g.last.winner} 승! 🎉</div>
+              <div className="text-2xl font-black tabular-nums text-white mt-2">
+                {g.last.ms}
+                <span className="text-base ml-1">ms</span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+      <p className="absolute bottom-6 text-white/40 text-xs pointer-events-none text-center px-6">
+        📱📱 폰 2대 버저 — 초록 신호에 먼저 휘두른 폰이 승 (신호 전이면 부정출발)
+      </p>
     </div>
   )
 }

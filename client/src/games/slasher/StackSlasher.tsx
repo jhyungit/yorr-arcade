@@ -575,16 +575,24 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
         ref={containerRef}
         className="relative flex-1 touch-none"
         onPointerDown={(e) => {
+          // 플레이 중에만 입력을 가로챈다. (ready/result 오버레이의 버튼 탭이
+          //  컨테이너로 버블링돼 preventDefault 로 막히면 폰에서 '시작'이 안 눌림)
+          if (ui.phase !== 'playing') return
           e.preventDefault()
+          e.currentTarget.setPointerCapture?.(e.pointerId)
           const { x, y } = rel(e)
           downRef.current(x, y)
         }}
         onPointerMove={(e) => {
+          if (ui.phase !== 'playing') return
           const { x, y } = rel(e)
           moveRef.current(x, y)
         }}
-        onPointerUp={() => upRef.current()}
-        onPointerLeave={() => upRef.current()}
+        onPointerUp={(e) => {
+          if (ui.phase !== 'playing') return
+          e.currentTarget.releasePointerCapture?.(e.pointerId)
+          upRef.current()
+        }}
         onPointerCancel={() => upRef.current()}
       >
         <canvas ref={canvasRef} className="block" />

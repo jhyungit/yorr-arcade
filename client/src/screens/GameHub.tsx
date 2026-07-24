@@ -57,7 +57,8 @@ interface GameHubProps {
   onSelect: (id: string) => void
   onController: () => void
   pairCode: string | null // 허브에서 폰 연결용으로 발급된 코드
-  phoneConnected: boolean // 폰 컨트롤러가 붙었는가
+  phoneConnected: boolean // 폰 컨트롤러가 하나라도 붙었는가
+  phoneCount: number // 연결된 폰 컨트롤러 수
   onConnectPhone: () => void // "폰 연결" 시작(코드 발급)
 }
 
@@ -66,6 +67,7 @@ export default function GameHub({
   onController,
   pairCode,
   phoneConnected,
+  phoneCount,
   onConnectPhone,
 }: GameHubProps) {
   const [index, setIndex] = useState(0)
@@ -195,14 +197,42 @@ export default function GameHub({
         </button>
       </div>
 
-      {/* 폰으로 같이 하기 — 역할을 "화면 vs 조종기"로 나눠 아이콘으로 구분 */}
+      {/* 폰으로 같이 하기 — 코드는 항상 유지, 여러 대 연결 + 연결 수 표시 */}
       <div className="mt-6 w-full max-w-sm">
-        {phoneConnected ? (
-          // 연결되면 상태 하나로 정리
-          <div className="flex items-center justify-center gap-2 rounded-2xl bg-[var(--pos)]/10 border border-[var(--pos)]/30 px-4 py-3">
-            <span className="text-lg">📱</span>
-            <span className="text-sm font-bold text-[var(--pos)]">폰 컨트롤러 연결됨</span>
-            <span className="text-xs text-[var(--ink-3)]">· 게임에서 바로 사용</span>
+        {pairCode ? (
+          // 코드 발급됨(이 기기=화면): 코드를 계속 보여주고, 붙은 폰 수를 실시간 표시
+          <div className="rounded-2xl bg-[var(--card)] border border-[var(--line)] p-3 shadow-sm">
+            <div className="flex items-center justify-center gap-2 mb-1">
+              <span className="text-sm font-bold text-[var(--ink)]">📱 폰 컨트롤러 연동</span>
+              <span
+                className={`text-xs font-bold rounded-full px-2 py-0.5 ${
+                  phoneCount > 0
+                    ? 'bg-[var(--pos)]/15 text-[var(--pos)]'
+                    : 'bg-[var(--line-2)] text-[var(--ink-3)]'
+                }`}
+              >
+                🎮 {phoneCount}대 연결됨
+              </span>
+            </div>
+            <div className="text-[11px] text-[var(--ink-2)] text-center">
+              폰에서 <b className="text-[var(--ink)]">🎮 컨트롤러로 쓰기</b> → 이 코드 입력 (여러 대 OK)
+            </div>
+            <div className="text-4xl font-black tracking-[0.3em] text-[var(--coral)] text-center my-1">
+              {pairCode}
+            </div>
+            <div className="text-[10px] text-[var(--ink-3)] break-all text-center">
+              또는 폰에서 열기: {typeof window !== 'undefined' ? window.location.host : ''}/?ctrl=
+              {pairCode}
+            </div>
+            <div className="mt-2 pt-2 border-t border-[var(--line)] text-center text-xs">
+              {phoneConnected ? (
+                <span className="text-[var(--pos)] font-bold">
+                  연결됨 — 게임에서 바로 사용 (반응속도는 2대면 폰 버저 대결!)
+                </span>
+              ) : (
+                <span className="text-[var(--ink-3)]">컨트롤러를 연동하세요 — 위 코드를 폰에 입력</span>
+              )}
+            </div>
           </div>
         ) : (
           <div className="rounded-2xl bg-[var(--card)] border border-[var(--line)] p-3 shadow-sm">
@@ -217,7 +247,7 @@ export default function GameHub({
               >
                 <span className="text-2xl leading-none">🖥️</span>
                 <span className="text-xs font-bold text-[var(--ink)] mt-1">폰 연결 코드 발급</span>
-                <span className="text-[10px] text-[var(--ink-3)]">화면에 폰 페어링</span>
+                <span className="text-[10px] text-[var(--ink-3)]">화면에 폰 여러 대 페어링</span>
               </button>
               {/* 이 기기 = 조종기 (게스트): ?ctrl 화면으로 */}
               <button
@@ -229,22 +259,6 @@ export default function GameHub({
                 <span className="text-[10px] text-[var(--ink-3)]">휴대폰 조종</span>
               </button>
             </div>
-
-            {/* "폰 연결 코드"를 누르면 코드가 여기 표시된다 */}
-            {pairCode && (
-              <div className="mt-3 pt-3 border-t border-[var(--line)] text-center">
-                <div className="text-[11px] text-[var(--ink-2)]">
-                  폰에서 <b className="text-[var(--ink)]">🎮 컨트롤러로 쓰기</b> → 이 코드 입력
-                </div>
-                <div className="text-3xl font-black tracking-[0.3em] text-[var(--coral)] my-0.5">
-                  {pairCode}
-                </div>
-                <div className="text-[10px] text-[var(--ink-3)] break-all">
-                  또는 폰에서 열기: {typeof window !== 'undefined' ? window.location.host : ''}/?ctrl=
-                  {pairCode}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>

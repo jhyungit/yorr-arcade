@@ -44,6 +44,11 @@ const REACTION_TYPES = ['like', 'laugh', 'shock', 'clap', 'gg']
 // code -> Room
 const rooms = new Map()
 
+// 폰 컨트롤러 페어링: code -> { displayId, controllers: Set<socketId> }
+//  한 노트북(display)에 여러 폰(controller)을 붙일 수 있게 컨트롤러 목록을 추적한다.
+//  (연결 수를 display 에 실시간으로 알려 UI 에 "연결된 폰 N개" 를 띄운다)
+const pairs = new Map()
+
 // --- 유틸 ---
 
 /** 4자리 방 코드 (헷갈리는 글자 0,O,1,I 제외) */
@@ -202,25 +207,28 @@ io.on('connection', (socket) => {
     pairCode = code
     pairRole = 'display'
     socket.join('pair:' + code)
+    pairs.set(code, { displayId: socket.id, controllers: new Set() })
     ack?.({ code })
   })
 
-  /** 폰(컨트롤러)이 코드로 연결 */
+  /** 폰(컨트롤러)이 코드로 연결 (여러 대 가능) */
   socket.on('pair:join', (rawCode, ack) => {
     const code = String(rawCode || '').toUpperCase().trim()
-    const room = io.sockets.adapter.rooms.get('pair:' + code)
-    if (!room || room.size === 0) {
+    const entry = pairs.get(code)
+    if (!entry) {
       ack?.({ ok: false, error: '연결할 게임을 찾을 수 없어요. 코드를 확인하세요.' })
       return
     }
     pairCode = code
     pairRole = 'controller'
     socket.join('pair:' + code)
-    // 순번 배정: 이미 있는 컨트롤러 수 + 1 (display 제외)
-    const after = io.sockets.adapter.rooms.get('pair:' + code)
-    pairPlayer = Math.min(2, Math.max(1, (after?.size ?? 2) - 1))
-    socket.to('pair:' + code).emit('ctrl:connected', { player: pairPlayer })
-    ack?.({ ok: true, player: pairPlayer })
+    entry.controllers.add(socket.id)
+    // 순번(플레이어 번호) = 현재까지 붙은 컨트롤러 수 (1,2,3,…)
+    pairPlayer = entry.controllers.size
+    const count = entry.controllers.size
+    // display(및 다른 컨트롤러)에 "새로 연결됨 + 현재 연결 수" 알림
+    socket.to('pair:' + code).emit('ctrl:connected', { player: pairPlayer, count })
+    ack?.({ ok: true, player: pairPlayer, count })
   })
 
   /** 폰 스윙 → 같은 페어링의 노트북으로 중계 (누가 눌렀는지 player 포함) */
@@ -283,9 +291,20 @@ io.on('connection', (socket) => {
     if (ppCode) socket.to('pp:' + ppCode).emit('pp:left')
   })
 
-  /** 페어링 상대에게 연결 종료 알림 */
+  /** 페어링 상대에게 연결 종료 알림 (+ 현재 연결 수) */
   socket.on('disconnect', () => {
-    if (pairCode) socket.to('pair:' + pairCode).emit(pairRole === 'controller' ? 'ctrl:disconnected' : 'display:disconnected')
+    if (!pairCode) return
+    const entry = pairs.get(pairCode)
+    if (pairRole === 'controller') {
+      if (entry) entry.controllers.delete(socket.id)
+      socket
+        .to('pair:' + pairCode)
+        .emit('ctrl:disconnected', { player: pairPlayer, count: entry ? entry.controllers.size : 0 })
+    } else if (pairRole === 'display') {
+      // 노트북(화면)이 나가면 컨트롤러들에 알리고 페어링 정리
+      socket.to('pair:' + pairCode).emit('display:disconnected')
+      pairs.delete(pairCode)
+    }
   })
 
   // ===== 리듬 탭 온라인 1:1 (rt:*) =====

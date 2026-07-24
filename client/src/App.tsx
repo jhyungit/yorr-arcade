@@ -30,13 +30,17 @@ export default function App() {
 
 function Main() {
   const [game, setGame] = useState<GameId | null>(null)
-  // 폰 컨트롤러 페어링 — 허브에서 한 번 연결하면 게임 진입 시 그대로 사용
+  // 폰 컨트롤러 페어링 — 허브에서 한 번 코드 발급 후 여러 대 연결 가능
   const [pairCode, setPairCode] = useState<string | null>(null)
-  const [phoneConnected, setPhoneConnected] = useState(false)
+  // 연결된 폰 컨트롤러 수 (서버가 count 를 실어 보냄). 0보다 크면 연결됨.
+  const [phoneCount, setPhoneCount] = useState(0)
+  const phoneConnected = phoneCount > 0
 
   useEffect(() => {
-    const onConn = () => setPhoneConnected(true)
-    const onDis = () => setPhoneConnected(false)
+    const onConn = (d?: { count?: number }) =>
+      setPhoneCount((c) => (typeof d?.count === 'number' ? d.count : c + 1))
+    const onDis = (d?: { count?: number }) =>
+      setPhoneCount((c) => (typeof d?.count === 'number' ? d.count : Math.max(0, c - 1)))
     socket.on('ctrl:connected', onConn)
     socket.on('ctrl:disconnected', onDis)
     return () => {
@@ -76,7 +80,14 @@ function Main() {
   }
   if (game === 'reaction') {
     // 반응속도(퀵드로우): 폰에서 직접 해도 되고, 노트북=신호화면 + 폰=휘두르기(컨트롤러)로도 가능
-    return <ReactionBattle onExit={() => setGame(null)} phoneConnected={phoneConnected} />
+    //  폰 2대가 붙으면 "폰 버저 2인 대결" 모드가 열린다(phoneCount).
+    return (
+      <ReactionBattle
+        onExit={() => setGame(null)}
+        phoneConnected={phoneConnected}
+        phoneCount={phoneCount}
+      />
+    )
   }
   if (game === 'slasher') {
     // 기술스택 슬래셔: 완전 클라이언트 사이드(터치/마우스 스와이프). 폰 컨트롤러 불필요.
@@ -97,6 +108,7 @@ function Main() {
       }}
       pairCode={pairCode}
       phoneConnected={phoneConnected}
+      phoneCount={phoneCount}
       onConnectPhone={connectPhone}
     />
   )
