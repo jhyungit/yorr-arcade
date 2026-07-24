@@ -60,6 +60,7 @@ interface GameHubProps {
   phoneConnected: boolean // 폰 컨트롤러가 하나라도 붙었는가
   phoneCount: number // 연결된 폰 컨트롤러 수
   onConnectPhone: () => void // "폰 연결" 시작(코드 발급)
+  initialGameId?: string | null // 방금 플레이한 게임 → 이 카드에서 시작(없으면 첫 카드)
 }
 
 export default function GameHub({
@@ -69,8 +70,13 @@ export default function GameHub({
   phoneConnected,
   phoneCount,
   onConnectPhone,
+  initialGameId,
 }: GameHubProps) {
-  const [index, setIndex] = useState(0)
+  // 게임에서 나왔을 때 방금 한 게임 카드에 위치 (허브 재진입 시 마운트되며 반영)
+  const [index, setIndex] = useState(() => {
+    const i = CARDS.findIndex((c) => c.id === initialGameId)
+    return i >= 0 ? i : 0
+  })
   const [drag, setDrag] = useState(0)
   const [dragging, setDragging] = useState(false)
   const startX = useRef<number | null>(null)

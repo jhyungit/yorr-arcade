@@ -30,6 +30,8 @@ export default function App() {
 
 function Main() {
   const [game, setGame] = useState<GameId | null>(null)
+  // 마지막으로 고른 게임 — 게임에서 나왔을 때 허브 카드가 그 게임에 위치하도록
+  const [lastGameId, setLastGameId] = useState<GameId | null>(null)
   // 폰 컨트롤러 페어링 — 허브에서 한 번 코드 발급 후 여러 대 연결 가능
   const [pairCode, setPairCode] = useState<string | null>(null)
   // 연결된 폰 컨트롤러 수 (서버가 count 를 실어 보냄). 0보다 크면 연결됨.
@@ -98,11 +100,12 @@ function Main() {
 
   return (
     <GameHub
+      initialGameId={lastGameId}
       onSelect={(id) => {
-        if (id === 'pingpong') setGame('pingpong')
-        else if (id === 'rhythm') setGame('rhythm')
-        else if (id === 'reaction') setGame('reaction')
-        else if (id === 'slasher') setGame('slasher')
+        if (id === 'pingpong' || id === 'rhythm' || id === 'reaction' || id === 'slasher') {
+          setGame(id)
+          setLastGameId(id) // 나중에 나왔을 때 이 카드에 위치
+        }
       }}
       onController={() => {
         // 이 폰을 "다른 화면의 컨트롤러"로 (새로고침하며 ?ctrl 진입)

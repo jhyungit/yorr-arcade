@@ -759,19 +759,26 @@ function Hud({
   const ringColor = rush ? '#ef4444' : '#22d3ee'
   return (
     <div className="pointer-events-none absolute inset-0 z-10">
-      {/* SCORE 좌상단 */}
-      <div className="absolute top-3 left-4">
-        <div className="label-mono text-white/45">SCORE</div>
-        <div className="text-3xl font-black tabular-nums leading-none text-white drop-shadow">
+      {/* SCORE — 상단 중앙, 점수 오를 때마다 팝(스케일)+네온 글로우로 상승감 강조 */}
+      <div className="absolute top-1.5 left-1/2 -translate-x-1/2 flex flex-col items-center">
+        <div className="label-mono text-white/45 tracking-widest">SCORE</div>
+        <div
+          key={score}
+          className="text-4xl font-black tabular-nums leading-none text-white"
+          style={{
+            animation: 'slasher-score 0.28s ease-out',
+            textShadow: '0 0 20px rgba(34,211,238,0.65), 0 0 6px rgba(233,53,193,0.5)',
+          }}
+        >
           {score.toLocaleString()}
         </div>
       </div>
 
-      {/* 콤보 중앙 상단 */}
+      {/* 콤보 — 점수 바로 아래 중앙 */}
       {combo >= 2 && (
         <div
           key={combo}
-          className="absolute top-3 left-1/2 -translate-x-1/2 text-center animate-combo-pop"
+          className="absolute top-[4.3rem] left-1/2 -translate-x-1/2 text-center animate-combo-hit"
         >
           <div
             className="text-2xl font-black tabular-nums"
@@ -782,9 +789,9 @@ function Hud({
         </div>
       )}
 
-      {/* 피버 배지 */}
+      {/* 피버 배지 — 콤보 아래 */}
       {fever && (
-        <div className="absolute top-14 left-1/2 -translate-x-1/2 text-xs font-black text-[#fbbf24] animate-pulse-slow">
+        <div className="absolute top-[6.6rem] left-1/2 -translate-x-1/2 text-xs font-black text-[#fbbf24] animate-pulse-slow">
           ☕ FEVER ×{FEVER_MULT}
         </div>
       )}
@@ -1027,6 +1034,11 @@ function StyleFx() {
         0% { opacity: 0; transform: translateY(8px) scale(0.7); }
         60% { transform: translateY(0) scale(1.08); }
         100% { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      @keyframes slasher-score {
+        0% { transform: scale(1); }
+        35% { transform: scale(1.32); }
+        100% { transform: scale(1); }
       }
     `}</style>
   )
