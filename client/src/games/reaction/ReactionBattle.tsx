@@ -4,68 +4,99 @@ import { canVibrate, unlockAudio } from '../../lib/feedback'
 import { likelyKeyboard } from '../../lib/device'
 import { socket } from '../../net/socket'
 import MatchLobby from '../../net/MatchLobby'
+import Arena, { type Fighter } from './Arena'
+import Gunslinger, { OUTFIT_LEFT, OUTFIT_RIGHT, type Outfit, type Pose } from './Gunslinger'
+import {
+  BULLET_MS,
+  FOUL,
+  FREEZE_MS,
+  GRACE_MS,
+  KO_MS,
+  MAX_HP,
+  MISS,
+  RESULT_MS,
+  SOLO_ROUNDS,
+  TIE_MS,
+  compareDraw,
+  isClean,
+  randomWait,
+  rankOf,
+  type Ms,
+} from './duel'
 
 /**
- * ReactionBattle — 반응속도 배틀
+ * 황야의 퀵드로우 (Wild West Quickdraw)
  * -------------------------------------------------------------
- * 정체성: "정적인 긴장 → 폭발적인 신호"의 강한 대비. (핑퐁·리듬과 완전히 다른 톤)
- *  - 대기: 어둡고 붉은 화면에서 숨죽여 기다린다.
- *  - 신호: 화면이 초록으로 폭발 + 진동 → 최대한 빨리 반응(탭/흔들기)!
- *  - 반응 시간(ms) 측정. 신호 전에 누르면 "부정 출발(false start)".
+ * 정체성: "석양의 결투" — 정적인 긴장 → 폭발적인 신호 → 총성 한 발.
+ *  - 두 총잡이가 좌우에서 서로를 겨눈다. 머리 위 신호등이 빨강.
+ *  - 신호등이 초록으로 바뀌는 순간 먼저 뽑은 쪽이 쏜다.
+ *  - 1ms 까지 같으면 Tie → HP 변화 없이 다음 라운드.
+ *  - 3발 맞으면 쓰러진다 (패배).
+ *  - 신호 전에 뽑으면 부정출발(FOUL) → 그 라운드 즉시 패배.
  *
  * 모드:
- *  - solo: 5라운드 기록 도전(최고/평균 + 등급). 탭 또는 폰 흔들기.
- *  - duo : 한 폰을 위/아래로 나눠 2인 대결. 신호 후 먼저 누른 쪽 승. 먼저 3승.
- *  (온라인 1:1 은 별도 단계에서 추가)
+ *  - solo       : 기록 도전 5라운드 (ms 측정 + 총잡이 등급). 무대는 결투와 동일.
+ *  - duo        : 한 폰을 좌우로 나눠 2인 (P1=왼쪽 / P2=오른쪽, 키보드 A·L)
+ *  - duo-phone  : 노트북=무대, 폰 2대가 각자의 총 (허브에서 폰 2대 연결 시)
+ *  - online-*   : 1:1 원격 결투 (호스트가 신호와 판정을 관장)
  */
 
 type Mode = 'solo' | 'duo' | 'duo-phone' | 'online-host' | 'online-guest'
 type Phase = 'menu' | 'waiting' | 'signal' | 'result' | 'over'
 
-const ROUNDS = 5 // solo 라운드 수
-const DUO_WINS = 3 // duo: 먼저 3승이면 종료 (5판 3선)
-// duo(한 기기 2인)를 노트북 키보드로 할 때 각 플레이어 키: P1=A(왼손), P2=L(오른손)
-const DUO_KEYS: Record<1 | 2, { code: string; label: string }> = {
-  1: { code: 'KeyA', label: 'A' },
-  2: { code: 'KeyL', label: 'L' },
-}
-const MIN_WAIT = 1300 // 신호까지 최소 대기(ms)
-const MAX_WAIT = 4300 // 신호까지 최대 대기(ms)
-const RESULT_MS = 1300 // 라운드 결과 보여주는 시간
-
-// 반응 시간(ms)으로 붙이는 등급/별명
-function rankOf(ms: number): { title: string; emoji: string; color: string } {
-  if (ms < 180) return { title: '치타 반사신경', emoji: '🐆', color: '#22d3ee' }
-  if (ms < 230) return { title: '번개', emoji: '⚡', color: '#a3e635' }
-  if (ms < 280) return { title: '훌륭해요', emoji: '🔥', color: '#facc15' }
-  if (ms < 350) return { title: '좋아요', emoji: '👍', color: '#fb923c' }
-  return { title: '커피 한 잔?', emoji: '☕', color: '#f87171' }
+/** 직전 라운드 결과 (연출과 판정에 함께 쓰인다) */
+interface RoundResult {
+  ms1: Ms
+  ms2: Ms
+  winner: 0 | 1 | 2 // 총을 쏜 쪽 (0 = Tie)
+  tie: boolean
+  hitSide: 0 | 1 | 2 // HP 를 잃은 쪽
+  koSide: 0 | 1 | 2 // 쓰러지는 쪽
+  over: boolean // 이 라운드로 승부가 끝났는가
+  pending: boolean // 온라인: 내 기록만 나오고 상대 대기중
 }
 
-// 게임의 "지금 상태"를 모아둔 가변 객체(핑퐁과 같은 ref 패턴)
+/**
+ * 게임의 "지금 상태" (핑퐁과 같은 ref 패턴 — 렌더는 force 로 유발).
+ * 진영 번호는 항상 1 = P1/호스트 · 2 = P2/게스트 로 고정(canonical).
+ * "나를 왼쪽에 두는" 좌우 뒤집기는 렌더 단계에서만 한다.
+ */
 interface Machine {
   mode: Mode
   phase: Phase
-  round: number // 현재 라운드(1부터)
-  signalAt: number // 신호가 화면에 뜬 시각(performance.now)
-  resolved: boolean // 이번 라운드가 이미 판정됐는가(중복 입력 방지)
-  soloTimes: number[] // solo 각 라운드 결과(ms). 부정출발은 -1
-  winsP1: number // duo=P1승 / online=호스트승
-  winsP2: number // duo=P2승 / online=게스트승
-  // 직전 라운드 결과. winner 0=무/미정, 1=P1(호스트), 2=P2(게스트)
-  // oppMs·pending 은 온라인에서만 사용(내 ms=ms, 상대 ms=oppMs, pending=상대 대기중)
-  last: { ms: number; winner: 0 | 1 | 2; falseStart: boolean; oppMs?: number; pending?: boolean }
-  // ── 온라인 전용 ──
+  round: number
+  signalAt: number
+  ms1: Ms
+  ms2: Ms
+  foul: 0 | 1 | 2 // 신호 전에 뽑은 쪽 (있으면 무조건 그쪽 패배)
+  resolved: boolean
+  impact: boolean // 총알이 도착했는가 (피격 자세·HP 표시를 여기에 맞춘다)
+  hp1: number
+  hp2: number
+  last: RoundResult
+  soloTimes: number[] // 기록 도전 결과 (FOUL/MISS 센티넬 포함)
   online: 'host' | 'guest' | null
-  hostMs: number | null // 이번 라운드 호스트 결과: null=미반응, -1=부정출발, ≥0=ms
-  guestMs: number | null // 게스트 결과(호스트가 취합)
-  roundResolved: boolean // 이번 라운드 승패 확정됨(중복 방지)
+  fx: number // 라운드마다 증가 — 연출 애니메이션 리셋 키
 }
+
+const EMPTY_RESULT: RoundResult = {
+  ms1: null,
+  ms2: null,
+  winner: 0,
+  tie: false,
+  hitSide: 0,
+  koSide: 0,
+  over: false,
+  pending: false,
+}
+
+/** duo(한 기기 2인)를 노트북 키보드로 할 때: P1=A(왼쪽) · P2=L(오른쪽) */
+const DUO_KEYS: Record<1 | 2, string> = { 1: 'KeyA', 2: 'KeyL' }
 
 interface ReactionBattleProps {
   onExit: () => void
-  phoneConnected?: boolean // 허브 연결된 폰: 노트북=신호화면 + 폰=휘두르기(solo)
-  phoneCount?: number // 연결된 폰 컨트롤러 수 (2대 이상이면 폰 버저 2인 대결 가능)
+  phoneConnected?: boolean
+  phoneCount?: number
 }
 
 export default function ReactionBattle({
@@ -78,524 +109,508 @@ export default function ReactionBattle({
     phase: 'menu',
     round: 0,
     signalAt: 0,
+    ms1: null,
+    ms2: null,
+    foul: 0,
     resolved: false,
+    impact: false,
+    hp1: MAX_HP,
+    hp2: MAX_HP,
+    last: EMPTY_RESULT,
     soloTimes: [],
-    winsP1: 0,
-    winsP2: 0,
-    last: { ms: 0, winner: 0, falseStart: false },
     online: null,
-    hostMs: null,
-    guestMs: null,
-    roundResolved: false,
+    fx: 0,
   })
-  const waitTimer = useRef<number | null>(null)
-  const resultTimer = useRef<number | null>(null)
-  // 온라인 로컬 탭을 온라인 로직으로 넘기는 다리 (마운트 1회 구성)
-  const onlineReactRef = useRef<() => void>(() => {})
-  const startOnlineRef = useRef<(role: 'host' | 'guest') => void>(() => {})
 
-  // 렌더용 상태 (ref → 화면 반영)
   const [, force] = useState(0)
-  const render = () => force((n) => n + 1)
+  const render = useCallback(() => force((n) => n + 1), [])
 
-  // 모션(폰 휘두르기) 켜짐 여부 — 퀵드로우의 기본 입력. 켜면 신호에 폰을 휘둘러 반응.
   const [motionOn, setMotionOn] = useState(false)
-  // 온라인 대전 상태 (역할·라운드는 m.current.online 에 있고, 여기선 화면 오버레이용만)
   const [lobbyOpen, setLobbyOpen] = useState(false)
   const [oppLeft, setOppLeft] = useState(false)
 
-  const clearTimers = () => {
-    if (waitTimer.current) window.clearTimeout(waitTimer.current)
-    if (resultTimer.current) window.clearTimeout(resultTimer.current)
-    waitTimer.current = null
-    resultTimer.current = null
-  }
+  // ── 타이머 (라운드 흐름 전체를 여기서 관리) ──
+  const t = useRef<Record<'wait' | 'grace' | 'freeze' | 'result' | 'impact', number | null>>({
+    wait: null,
+    grace: null,
+    freeze: null,
+    result: null,
+    impact: null,
+  })
+  const clearT = useCallback((k: keyof typeof t.current) => {
+    const id = t.current[k]
+    if (id != null) window.clearTimeout(id)
+    t.current[k] = null
+  }, [])
+  const clearAllT = useCallback(() => {
+    ;(['wait', 'grace', 'freeze', 'result', 'impact'] as const).forEach(clearT)
+  }, [clearT])
 
-  // 다음 라운드 대기 시작 (붉은 화면 → 랜덤 시간 후 신호)
+  // enterWaiting ↔ nextRound 는 서로를 참조하므로 한쪽만 ref 로 끊는다
+  const nextRoundRef = useRef<() => void>(() => {})
+
+  /** 이번 라운드 승패 확정 → 결과 연출 시작 */
+  const resolve = useCallback(() => {
+    const g = m.current
+    if (g.resolved) return
+    g.resolved = true
+    clearT('wait')
+    clearT('grace')
+    clearT('freeze')
+
+    const solo = g.mode === 'solo'
+
+    // 승자: 부정출발이 있으면 그쪽이 무조건 패배, 아니면 더 빠른 쪽
+    let winner: 0 | 1 | 2
+    if (g.foul === 1) winner = 2
+    else if (g.foul === 2) winner = 1
+    else if (solo) winner = isClean(g.ms1) ? 1 : 2
+    else winner = compareDraw(g.ms1, g.ms2)
+
+    const tie = winner === 0
+    let hitSide: 0 | 1 | 2 = 0
+    let koSide: 0 | 1 | 2 = 0
+    let over = false
+
+    if (solo) {
+      g.soloTimes.push(typeof g.ms1 === 'number' ? g.ms1 : MISS)
+      koSide = winner === 1 ? 2 : 0 // 이긴 라운드는 무법자가 쓰러진다
+      over = g.round >= SOLO_ROUNDS
+    } else if (!tie) {
+      hitSide = winner === 1 ? 2 : 1
+      if (hitSide === 1) g.hp1 = Math.max(0, g.hp1 - 1)
+      else g.hp2 = Math.max(0, g.hp2 - 1)
+      if ((hitSide === 1 ? g.hp1 : g.hp2) <= 0) {
+        koSide = hitSide
+        over = true
+      }
+    }
+
+    g.impact = false
+    g.last = { ms1: g.ms1, ms2: g.ms2, winner, tie, hitSide, koSide, over, pending: false }
+    g.phase = 'result'
+    render()
+
+    // 폰 버저 대결: 이긴 폰을 진동시켜 손맛
+    if (g.mode === 'duo-phone' && winner !== 0) {
+      socket.emit('game:hit', { player: winner, kind: 'react' })
+    }
+    // 온라인 호스트: 판정 결과를 게스트에게
+    if (g.online === 'host') {
+      socket.emit('rx:round', {
+        ms1: g.ms1,
+        ms2: g.ms2,
+        winner,
+        tie,
+        hp1: g.hp1,
+        hp2: g.hp2,
+        koSide,
+        over,
+      })
+    }
+
+    // 총알이 닿는 순간에 맞춰 피격 자세 / HP 감소를 보여준다
+    t.current.impact = window.setTimeout(() => {
+      m.current.impact = true
+      if (canVibrate) navigator.vibrate(tie ? 30 : [0, 45, 25, 70])
+      render()
+    }, BULLET_MS)
+
+    t.current.result = window.setTimeout(
+      () => nextRoundRef.current(),
+      over ? KO_MS : tie ? TIE_MS : RESULT_MS,
+    )
+  }, [clearT, render])
+
+  /** 신호등을 초록으로 (호스트/로컬만 호출 — 게스트는 rx:signal 로 받는다) */
+  const fire = useCallback(() => {
+    const g = m.current
+    if (g.phase !== 'waiting') return
+    g.phase = 'signal'
+    g.signalAt = performance.now()
+    if (canVibrate) navigator.vibrate([0, 40, 30, 60])
+    render()
+    if (g.online === 'host') socket.emit('rx:signal')
+
+    // 아무도 뽑지 않으면 라운드를 무효로 넘긴다 (화면이 멈추지 않게)
+    clearT('freeze')
+    t.current.freeze = window.setTimeout(() => {
+      const gg = m.current
+      if (gg.resolved || gg.phase !== 'signal') return
+      if (gg.ms1 == null) gg.ms1 = MISS
+      if (gg.ms2 == null && gg.mode !== 'solo') gg.ms2 = MISS
+      resolve()
+    }, FREEZE_MS)
+  }, [clearT, render, resolve])
+
+  /** 다음 라운드 대기 시작 (빨간 신호등 + 랜덤 대기) */
   const enterWaiting = useCallback(() => {
     const g = m.current
+    clearAllT()
     g.phase = 'waiting'
+    g.ms1 = null
+    g.ms2 = null
+    g.foul = 0
     g.resolved = false
+    g.impact = false
+    g.last = EMPTY_RESULT
+    g.fx++
     render()
-    const wait = MIN_WAIT + Math.random() * (MAX_WAIT - MIN_WAIT)
-    waitTimer.current = window.setTimeout(() => {
-      const gg = m.current
-      if (gg.phase !== 'waiting') return
-      gg.phase = 'signal'
-      gg.signalAt = performance.now()
-      gg.resolved = false
-      if (canVibrate) navigator.vibrate([0, 40, 30, 60]) // 신호 진동
+    if (g.online === 'guest') return // 게스트는 호스트의 신호를 기다린다
+    if (g.online === 'host') socket.emit('rx:arm', { round: g.round })
+    t.current.wait = window.setTimeout(fire, randomWait())
+  }, [clearAllT, fire, render])
+
+  const nextRound = useCallback(() => {
+    const g = m.current
+    if (g.last.over) {
+      g.phase = 'over'
       render()
-    }, wait)
-  }, [])
+      return
+    }
+    g.round++
+    enterWaiting()
+  }, [enterWaiting, render])
+  useEffect(() => {
+    nextRoundRef.current = nextRound
+  }, [nextRound])
 
-  // 라운드 결과 보여준 뒤 다음으로 (또는 종료)
-  const afterResult = useCallback(() => {
-    resultTimer.current = window.setTimeout(() => {
+  /** 한 진영의 반응을 기록 → 판정 조건이 되면 resolve */
+  const record = useCallback(
+    (side: 1 | 2, value: number) => {
       const g = m.current
-      if (g.mode === 'solo') {
-        if (g.round >= ROUNDS) {
-          g.phase = 'over'
-          render()
-        } else {
-          g.round++
-          enterWaiting()
-        }
+      if (g.resolved) return
+      if (side === 1) {
+        if (g.ms1 != null) return
+        g.ms1 = value
       } else {
-        // duo: 먼저 3승 나면 종료
-        if (g.winsP1 >= DUO_WINS || g.winsP2 >= DUO_WINS) {
-          g.phase = 'over'
-          render()
-        } else {
-          g.round++
-          enterWaiting()
-        }
+        if (g.ms2 != null) return
+        g.ms2 = value
       }
-    }, RESULT_MS)
-  }, [enterWaiting])
 
-  // 입력 처리: player = 1(위)·2(아래)·0(solo/공통)
-  const react = useCallback(
-    (player: 0 | 1 | 2) => {
-      const g = m.current
-      unlockAudio()
-      // 온라인은 별도 로직으로 (호스트 권위)
-      if (g.online) {
-        onlineReactRef.current()
+      // 부정출발은 기다릴 것 없이 그 자리에서 패배
+      if (value === FOUL) {
+        g.foul = side
+        resolve()
         return
       }
-      if (g.phase === 'waiting') {
-        // 신호 전에 누름 → 부정 출발
-        if (g.resolved) return
-        g.resolved = true
-        if (waitTimer.current) window.clearTimeout(waitTimer.current)
-        if (g.mode === 'solo') {
-          g.soloTimes.push(-1)
-          g.last = { ms: -1, winner: 0, falseStart: true }
-        } else {
-          // 부정 출발한 사람의 상대가 이 라운드 승리
-          const winner: 1 | 2 = player === 1 ? 2 : 1
-          if (winner === 1) g.winsP1++
-          else g.winsP2++
-          g.last = { ms: -1, winner, falseStart: true }
-        }
-        g.phase = 'result'
-        render()
-        afterResult()
+      if (canVibrate) navigator.vibrate(18)
+
+      if (g.mode === 'solo' || (g.ms1 != null && g.ms2 != null)) {
+        resolve()
         return
       }
-      if (g.phase === 'signal') {
-        if (g.resolved) return
-        g.resolved = true
-        const ms = Math.round(performance.now() - g.signalAt)
-        if (g.mode === 'solo') {
-          g.soloTimes.push(ms)
-          g.last = { ms, winner: 0, falseStart: false }
-        } else {
-          const winner: 1 | 2 = player === 1 ? 1 : 2
-          if (winner === 1) g.winsP1++
-          else g.winsP2++
-          g.last = { ms, winner, falseStart: false }
-          // 폰 2대 버저: 이긴 폰을 진동시켜 손맛 피드백
-          if (g.mode === 'duo-phone') socket.emit('game:hit', { player: winner, kind: 'react' })
-        }
-        if (canVibrate) navigator.vibrate(20)
-        g.phase = 'result'
-        render()
-        afterResult()
-      }
+      // 한쪽이 뽑았다 → 상대에게 마지막 유예. 못 뽑으면 그대로 맞는다.
+      clearT('grace')
+      t.current.grace = window.setTimeout(() => {
+        const gg = m.current
+        if (gg.resolved) return
+        if (gg.ms1 == null) gg.ms1 = MISS
+        if (gg.ms2 == null) gg.ms2 = MISS
+        resolve()
+      }, GRACE_MS)
     },
-    [afterResult],
+    [clearT, resolve],
   )
 
-  // 폰 휘두르기 = 반응(퀵드로우의 핵심 입력).
-  //  - solo / online: 내가 든 폰을 휘두르면 react → 신호 후면 반응 기록, 신호 전이면 부정출발.
-  //  - duo(한 폰 2인): 누가 흔들었는지 못 가리므로 모션은 끄고 탭으로만.
-  //  react() 안에서 현재 phase 로 판단하므로 여기선 모드만 거른다.
+  /** 이 기기에서 들어온 입력 (탭 / 키 / 폰 스윙) */
+  const submit = useCallback(
+    (side: 1 | 2) => {
+      const g = m.current
+      unlockAudio()
+      if (g.phase !== 'waiting' && g.phase !== 'signal') return
+      const value = g.phase === 'waiting' ? FOUL : Math.round(performance.now() - g.signalAt)
+
+      // 게스트는 판정 권한이 없다 — 기록만 보고하고 결과를 기다린다
+      if (g.online === 'guest') {
+        if (g.resolved) return
+        g.resolved = true
+        g.ms2 = value
+        if (canVibrate) navigator.vibrate(value === FOUL ? 60 : 18)
+        socket.emit('rx:react', { ms: value })
+        g.impact = false
+        g.last = { ...EMPTY_RESULT, ms2: value, pending: true }
+        g.phase = 'result'
+        render()
+        return
+      }
+      record(side, value)
+    },
+    [record, render],
+  )
+
+  // ── 이 기기의 폰 휘두르기 = 뽑기 (solo / online) ──
   const { permission, requestPermission } = useSwing({
     onSwing: () => {
       const g = m.current
-      // 로컬 기기 모션은 solo/online 에서만. duo(화면분할)·duo-phone(폰버저)은 제외.
-      if (g.mode !== 'duo' && g.mode !== 'duo-phone') react(0)
+      if (g.mode === 'duo' || g.mode === 'duo-phone') return // 누가 흔들었는지 못 가림
+      submit(g.online === 'guest' ? 2 : 1)
     },
     enabled: motionOn,
     threshold: 15,
   })
 
-  useEffect(() => () => clearTimers(), [])
+  useEffect(() => () => clearAllT(), [clearAllT])
 
-  // 키보드(노트북/PC): solo·online 은 스페이스로 반응, duo 는 P1=A · P2=L.
-  //  마우스 클릭도 그대로 동작하고, 이건 더 빠르고 손맛 좋은 대안.
+  // ── 키보드 (노트북/PC) ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat) return
-      // 로비 코드 입력 등 텍스트 필드 타이핑 중이면 가로채지 않음
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       const g = m.current
-      if (g.phase === 'menu' || g.phase === 'over') return
+      if (g.phase !== 'waiting' && g.phase !== 'signal') return
       if (g.mode === 'duo') {
-        if (e.code === DUO_KEYS[1].code) {
+        if (e.code === DUO_KEYS[1]) {
           e.preventDefault()
-          react(1)
-        } else if (e.code === DUO_KEYS[2].code) {
+          submit(1)
+        } else if (e.code === DUO_KEYS[2]) {
           e.preventDefault()
-          react(2)
+          submit(2)
         }
         return
       }
       if (e.code === 'Space') {
         e.preventDefault()
-        react(0)
+        submit(g.online === 'guest' ? 2 : 1)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [react])
+  }, [submit])
 
-  // 폰(컨트롤러) 휘두름 → 반응 (solo 전용: 노트북이 신호 화면, 폰이 휘두름).
-  //  신호 전 휘두르면 부정출발, 신호 후면 반응 기록 — react() 가 phase 로 판단.
+  // ── 폰 컨트롤러 스윙 (노트북이 무대) ──
   useEffect(() => {
     const onSwing = (d?: { player?: number }) => {
-      const mode = m.current.mode
-      if (mode === 'solo') react(0)
-      // 폰 2대 버저: 어느 폰이 휘둘렀는지(player)로 P1/P2 반응 처리
-      else if (mode === 'duo-phone') react(d?.player === 2 ? 2 : 1)
+      const g = m.current
+      if (g.mode === 'solo') submit(1)
+      else if (g.mode === 'duo-phone') submit(d?.player === 2 ? 2 : 1)
     }
     socket.on('ctrl:swing', onSwing)
     return () => {
       socket.off('ctrl:swing', onSwing)
     }
-  }, [react])
+  }, [submit])
 
-  // ── 온라인 대전 로직 (마운트 1회 구성; 호스트가 신호·판정을 관장) ──
+  // ── 온라인 소켓 ──
   useEffect(() => {
-    const g = m.current
-
-    // 내 반응을 "결과(상대 대기중)" 화면으로 먼저 표시
-    const showPendingSelf = (ms: number, foul: boolean) => {
-      g.phase = 'result'
-      g.last = { ms, winner: 0, falseStart: foul, oppMs: undefined, pending: true }
-      render()
+    // 게스트 보고 → 호스트가 취합
+    const onReact = (d?: { ms?: number }) => {
+      const g = m.current
+      if (g.online !== 'host') return
+      record(2, typeof d?.ms === 'number' ? d.ms : MISS)
     }
-
-    // 호스트: 라운드 대기 시작 → 랜덤 시간 후 신호
-    const hostArm = () => {
-      g.phase = 'waiting'
-      g.resolved = false
-      g.roundResolved = false
-      g.hostMs = null
-      g.guestMs = null
-      g.signalAt = 0
-      render()
-      socket.emit('rx:arm', { round: g.round })
-      const wait = MIN_WAIT + Math.random() * (MAX_WAIT - MIN_WAIT)
-      waitTimer.current = window.setTimeout(() => {
-        if (g.phase !== 'waiting') return
-        g.phase = 'signal'
-        g.signalAt = performance.now()
-        if (canVibrate) navigator.vibrate([0, 40, 30, 60])
-        render()
-        socket.emit('rx:signal')
-      }, wait)
-    }
-
-    // 호스트: 두 결과가 모이면(또는 부정출발이면 즉시) 승패 확정
-    const hostResolve = () => {
-      if (g.roundResolved) return
-      const h = g.hostMs
-      const gu = g.guestMs
-      const hFoul = h === -1
-      const gFoul = gu === -1
-      let winner: 0 | 1 | 2 = 0
-      if (hFoul || gFoul) {
-        winner = hFoul && gFoul ? 0 : hFoul ? 2 : 1 // 부정출발한 쪽이 짐
-      } else {
-        if (h === null || gu === null) return // 아직 둘 다 반응 안 함
-        winner = h <= gu ? 1 : 2 // 더 빠른 쪽 승
-      }
-      g.roundResolved = true
-      if (winner === 1) g.winsP1++
-      else if (winner === 2) g.winsP2++
-      const over = g.winsP1 >= DUO_WINS || g.winsP2 >= DUO_WINS
-      g.last = { ms: h ?? -1, oppMs: gu ?? -1, winner, falseStart: hFoul || gFoul, pending: false }
-      g.phase = 'result'
-      render()
-      socket.emit('rx:round', {
-        s1: g.winsP1,
-        s2: g.winsP2,
-        winner,
-        hostMs: h ?? -1,
-        guestMs: gu ?? -1,
-        over,
-      })
-      resultTimer.current = window.setTimeout(() => {
-        if (over) {
-          g.phase = 'over'
-          render()
-        } else {
-          g.round++
-          hostArm()
-        }
-      }, RESULT_MS)
-    }
-
-    // 로컬 탭 처리 (내가 호스트냐 게스트냐에 따라)
-    const onlineReact = () => {
-      if (g.online === 'host') {
-        if (g.phase === 'waiting') {
-          if (g.roundResolved) return
-          if (waitTimer.current) window.clearTimeout(waitTimer.current)
-          g.hostMs = -1 // 신호 전 → 부정출발
-          showPendingSelf(-1, true)
-          hostResolve()
-        } else if (g.phase === 'signal') {
-          if (g.hostMs !== null) return
-          g.hostMs = Math.round(performance.now() - g.signalAt)
-          if (canVibrate) navigator.vibrate(20)
-          showPendingSelf(g.hostMs, false)
-          hostResolve()
-        }
-      } else if (g.online === 'guest') {
-        if (g.phase === 'waiting') {
-          if (g.resolved) return
-          g.resolved = true
-          socket.emit('rx:react', { falseStart: true })
-          showPendingSelf(-1, true)
-        } else if (g.phase === 'signal') {
-          if (g.resolved) return
-          g.resolved = true
-          const ms = Math.round(performance.now() - g.signalAt)
-          if (canVibrate) navigator.vibrate(20)
-          socket.emit('rx:react', { ms })
-          showPendingSelf(ms, false)
-        }
-      }
-    }
-    onlineReactRef.current = onlineReact
-
-    const startOnline = (role: 'host' | 'guest') => {
-      g.mode = role === 'host' ? 'online-host' : 'online-guest'
-      g.online = role
-      g.round = 1
-      g.winsP1 = 0
-      g.winsP2 = 0
-      g.hostMs = null
-      g.guestMs = null
-      g.roundResolved = false
-      g.resolved = false
-      g.last = { ms: 0, winner: 0, falseStart: false }
-      if (role === 'host') hostArm()
-      else {
-        g.phase = 'waiting' // 게스트: 호스트의 arm/신호를 기다림
-        render()
-      }
-    }
-    startOnlineRef.current = startOnline
-
-    // ── 소켓 수신 ──
-    const onArm = (data: { round: number }) => {
+    // 호스트가 라운드를 열었다 (게스트: 빨간 신호등으로)
+    const onArm = (d?: { round?: number }) => {
+      const g = m.current
       if (g.online !== 'guest') return
-      if (data?.round === 1) {
-        g.winsP1 = 0
-        g.winsP2 = 0
-      } // 새 매치/재대결이면 점수 초기화
+      clearAllT()
+      if (d?.round === 1) {
+        g.hp1 = MAX_HP
+        g.hp2 = MAX_HP
+      }
+      if (typeof d?.round === 'number') g.round = d.round
       g.phase = 'waiting'
+      g.ms1 = null
+      g.ms2 = null
+      g.foul = 0
       g.resolved = false
-      g.signalAt = 0
-      g.last = { ms: 0, winner: 0, falseStart: false }
+      g.impact = false
+      g.last = EMPTY_RESULT
+      g.fx++
       render()
     }
     const onSignal = () => {
-      if (g.online !== 'guest') return
+      const g = m.current
+      if (g.online !== 'guest' || g.phase !== 'waiting') return
       g.phase = 'signal'
       g.signalAt = performance.now()
-      g.resolved = false
       if (canVibrate) navigator.vibrate([0, 40, 30, 60])
       render()
     }
-    const onReact = (data: { ms?: number; falseStart?: boolean }) => {
-      if (g.online !== 'host') return
-      if (g.guestMs !== null) return
-      g.guestMs = data.falseStart ? -1 : Math.round(data.ms ?? 0)
-      // 게스트가 신호 전에 눌러 부정출발이면 대기 타이머 취소 후 즉시 판정
-      if (g.guestMs === -1 && g.phase === 'waiting' && waitTimer.current) {
-        window.clearTimeout(waitTimer.current)
-      }
-      hostResolve()
-    }
+    // 호스트 판정 결과
     const onRound = (d: {
-      s1: number
-      s2: number
+      ms1: Ms
+      ms2: Ms
       winner: 0 | 1 | 2
-      hostMs: number
-      guestMs: number
+      tie: boolean
+      hp1: number
+      hp2: number
+      koSide: 0 | 1 | 2
       over: boolean
     }) => {
+      const g = m.current
       if (g.online !== 'guest') return
-      g.winsP1 = d.s1
-      g.winsP2 = d.s2
-      g.roundResolved = true
+      clearAllT()
+      g.resolved = true
+      g.ms1 = d.ms1 ?? null
+      g.ms2 = d.ms2 ?? null
+      g.hp1 = d.hp1
+      g.hp2 = d.hp2
+      g.impact = false
       g.last = {
-        ms: d.guestMs,
-        oppMs: d.hostMs,
+        ms1: g.ms1,
+        ms2: g.ms2,
         winner: d.winner,
-        falseStart: d.hostMs === -1 || d.guestMs === -1,
+        tie: d.tie,
+        hitSide: d.tie ? 0 : d.winner === 1 ? 2 : 1,
+        koSide: d.koSide ?? 0,
+        over: !!d.over,
         pending: false,
       }
-      g.phase = d.over ? 'over' : 'result'
+      g.phase = 'result'
       render()
+      t.current.impact = window.setTimeout(() => {
+        m.current.impact = true
+        if (canVibrate) navigator.vibrate(d.tie ? 30 : [0, 45, 25, 70])
+        render()
+      }, BULLET_MS)
+      if (d.over) {
+        t.current.result = window.setTimeout(() => {
+          m.current.phase = 'over'
+          render()
+        }, KO_MS)
+      }
     }
     const onLeft = () => {
-      if (g.online) setOppLeft(true)
+      if (m.current.online) setOppLeft(true)
     }
+
+    socket.on('rx:react', onReact)
     socket.on('rx:arm', onArm)
     socket.on('rx:signal', onSignal)
-    socket.on('rx:react', onReact)
     socket.on('rx:round', onRound)
     socket.on('rx:left', onLeft)
     return () => {
+      socket.off('rx:react', onReact)
       socket.off('rx:arm', onArm)
       socket.off('rx:signal', onSignal)
-      socket.off('rx:react', onReact)
       socket.off('rx:round', onRound)
       socket.off('rx:left', onLeft)
     }
-  }, [])
+  }, [clearAllT, record, render])
 
-  const startMode = (mode: Mode) => {
-    unlockAudio()
-    const g = m.current
-    g.mode = mode
-    g.online = null
-    g.round = 1
-    g.soloTimes = []
-    g.winsP1 = 0
-    g.winsP2 = 0
-    g.last = { ms: 0, winner: 0, falseStart: false }
-    enterWaiting()
-  }
+  // ── 시작/재시작 ──
+  const startMode = useCallback(
+    (mode: Mode, online: 'host' | 'guest' | null = null) => {
+      unlockAudio()
+      const g = m.current
+      g.mode = mode
+      g.online = online
+      g.round = 1
+      g.hp1 = MAX_HP
+      g.hp2 = MAX_HP
+      g.soloTimes = []
+      g.last = EMPTY_RESULT
+      enterWaiting()
+    },
+    [enterWaiting],
+  )
 
-  // 온라인 로비 매칭 완료 → 시작
-  const onMatched = useCallback((role: 'host' | 'guest') => {
-    unlockAudio()
-    setLobbyOpen(false)
-    setOppLeft(false)
-    startOnlineRef.current(role)
-  }, [])
+  const onMatched = useCallback(
+    (role: 'host' | 'guest') => {
+      setLobbyOpen(false)
+      setOppLeft(false)
+      startMode(role === 'host' ? 'online-host' : 'online-guest', role)
+    },
+    [startMode],
+  )
 
-  // 메뉴에서 모드 선택 → (모션 모드면) 센서 권한 요청 후 시작.
-  //  이 클릭이 "사용자 제스처"라서 iOS 동작센서·오디오 권한을 여기서 얻는다.
+  /** 메뉴에서 모드 선택 — 이 클릭 안에서 iOS 센서/오디오 권한을 얻는다 */
   const begin = async (choice: 'solo' | 'duo' | 'duo-phone' | 'online') => {
     unlockAudio()
     if (choice === 'solo' || choice === 'online') {
-      // solo/online 은 이 기기의 폰 휘두르기 사용 → 권한 요청(안드로이드는 즉시 granted)
       await requestPermission()
       setMotionOn(true)
     }
-    // duo(화면분할)·duo-phone(폰 2대 버저)은 이 기기 모션 불필요
     if (choice === 'online') setLobbyOpen(true)
     else startMode(choice)
   }
 
   const g = m.current
 
-  // solo/online 에서 "어떻게 반응하는지" 안내 문구.
-  //  우선순위: 폰 컨트롤러 연결 > 노트북/PC 키보드 > 폰 모션(권한 O) > 탭
-  //  (노트북은 모션센서가 없어 motionOn 이 켜져도 스윙이 안 되므로 키보드 안내가 우선)
+  // ── 조작 안내 ──
+  //  2인 모드는 조작 방식이 정해져 있고(좌우 탭 / 각자 폰), 1인·온라인만
+  //  이 기기의 입력 수단을 따진다: 폰 컨트롤러 > 노트북 키보드 > 폰 모션 > 탭
   const motionReady = motionOn && permission === 'granted'
-  const reactHint = phoneConnected
-    ? { wait: '🔴 초록이 되면 폰을 휘둘러!', act: '휘둘러!' }
-    : likelyKeyboard
-      ? { wait: '🔴 초록이 되면 스페이스바!', act: 'SPACE' }
-      : motionReady
-        ? { wait: '🔴 초록이 되면 폰을 휘둘러!', act: '휘둘러!' }
-        : { wait: '🔴 초록이 되면 탭!', act: 'TAP' }
+  let hint: string
+  let actLabel: string
+  if (g.mode === 'duo') {
+    hint = likelyKeyboard ? '초록이 되면 내 키를! (P1=A · P2=L)' : '초록이 되면 자기 쪽 화면을 탭!'
+    actLabel = likelyKeyboard ? 'A / L' : 'TAP'
+  } else if (g.mode === 'duo-phone') {
+    hint = '초록이 되면 각자 폰을 휘둘러 뽑아!'
+    actLabel = '휘둘러!'
+  } else if (phoneConnected || motionReady) {
+    hint = '초록이 되면 폰을 휘둘러 뽑아!'
+    actLabel = '휘둘러!'
+  } else if (likelyKeyboard) {
+    hint = '초록이 되면 스페이스바!'
+    actLabel = 'SPACE'
+  } else {
+    hint = '초록이 되면 화면을 탭!'
+    actLabel = 'TAP'
+  }
 
-  // ── 화면 ──
+  const playing = g.phase === 'waiting' || g.phase === 'signal' || g.phase === 'result'
+
   return (
-    <div className="fixed inset-0 flex flex-col bg-[#120306] text-white select-none overflow-hidden">
-      {/* 상단 바 (메뉴/결과에서만 또렷하게; 플레이 중엔 방해 안 되게 흐리게) */}
-      <div className="absolute top-0 inset-x-0 z-30 flex items-center justify-between px-4 py-2.5">
+    <div className="fixed inset-0 flex flex-col bg-[#0b0409] text-white select-none overflow-hidden">
+      {/* 상단 바 */}
+      <div className="absolute top-0 inset-x-0 z-30 flex items-start justify-between px-3 py-2.5">
         <button
           onClick={onExit}
-          className="text-sm text-white/70 hover:text-white"
-          style={{ opacity: g.phase === 'menu' || g.phase === 'over' ? 1 : 0.35 }}
+          className="text-sm text-white/75 hover:text-white"
+          style={{ opacity: playing ? 0.4 : 1 }}
         >
           ‹ 게임 선택
         </button>
-        {/* 입력 상태 배지: 폰컨트롤러>노트북키보드>폰모션>탭 (reactHint 우선순위와 일치) */}
-        {g.mode !== 'duo' &&
-          (phoneConnected ? (
-            <span className="text-xs rounded-full px-3 py-1 border border-[#4ade80]/60 text-[#4ade80]">
-              🎮 폰 휘두르기
-            </span>
-          ) : likelyKeyboard ? (
-            <span className="text-xs rounded-full px-3 py-1 border border-[#fbbf24]/60 text-[#fbbf24]">
-              ⌨️ Space
-            </span>
-          ) : motionOn ? (
-            <span
-              className={`text-xs rounded-full px-3 py-1 border ${
-                permission === 'granted'
-                  ? 'border-[#4ade80]/60 text-[#4ade80]'
-                  : 'border-white/20 text-white/50'
-              }`}
-            >
-              {permission === 'granted' ? '📳 휘두르기 ON' : '📳 탭으로 진행'}
-            </span>
-          ) : null)}
+        {g.mode !== 'duo' && <InputBadge phoneConnected={phoneConnected} motionOn={motionOn} permission={permission} />}
       </div>
 
-      {/* 본문 (모드별) */}
       {g.phase === 'menu' && (
-        <Menu
-          phoneCount={phoneCount}
-          onSelect={(mode) => begin(mode)}
-          onDuoPhone={() => begin('duo-phone')}
-          onOnline={() => begin('online')}
+        <Menu phoneCount={phoneCount} onPick={begin} />
+      )}
+
+      {playing && (
+        <DuelStage
+          machine={g}
+          hint={hint}
+          actLabel={actLabel}
+          onTap={submit}
         />
       )}
 
       {g.phase === 'over' &&
-        (g.online ? (
-          <OnlineOver
+        (g.mode === 'solo' ? (
+          <SoloVerdict machine={g} onRetry={() => startMode('solo')} onExit={onExit} />
+        ) : (
+          <DuelVerdict
             machine={g}
-            role={g.online}
-            onRestart={() => startOnlineRef.current('host')}
+            onRetry={() =>
+              g.online === 'host'
+                ? startMode('online-host', 'host')
+                : g.online === 'guest'
+                  ? undefined
+                  : startMode(g.mode)
+            }
             onExit={onExit}
           />
-        ) : (
-          <Over machine={g} onRetry={() => startMode(g.mode)} onExit={onExit} />
         ))}
 
-      {/* 플레이 화면 (waiting/signal/result) */}
-      {(g.phase === 'waiting' || g.phase === 'signal' || g.phase === 'result') &&
-        (g.online ? (
-          <OnlinePlay machine={g} role={g.online} hint={reactHint} onReact={() => react(0)} />
-        ) : g.mode === 'solo' ? (
-          <SoloPlay machine={g} hint={reactHint} onReact={() => react(0)} />
-        ) : g.mode === 'duo-phone' ? (
-          <DuoPhonePlay machine={g} />
-        ) : (
-          <DuoPlay machine={g} onReact={react} />
-        ))}
-
-      {/* 온라인 로비 */}
       {lobbyOpen && (
         <MatchLobby
           prefix="rx"
-          title="반응속도 배틀"
+          title="황야의 퀵드로우"
           accent="#f59e0b"
           onMatched={onMatched}
           onCancel={() => setLobbyOpen(false)}
         />
       )}
 
-      {/* 상대 이탈 */}
       {oppLeft && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/92 px-6">
-          <div className="text-5xl mb-2">🔌</div>
-          <h2 className="text-xl font-black mb-1">상대가 나갔어요</h2>
+          <div className="text-5xl mb-2">🐎</div>
+          <h2 className="text-xl font-black mb-1">상대가 말을 타고 떠났어요</h2>
           <p className="text-white/60 mb-6 text-sm">연결이 끊어졌습니다.</p>
           <button
             onClick={onExit}
@@ -610,489 +625,317 @@ export default function ReactionBattle({
   )
 }
 
-// ── 메뉴 ──
+/* ============================================================
+   무대 — Machine 을 Arena 가 이해하는 "화면"으로 번역
+   ============================================================ */
+function DuelStage({
+  machine,
+  hint,
+  actLabel,
+  onTap,
+}: {
+  machine: Machine
+  hint: string
+  actLabel: string
+  onTap: (side: 1 | 2) => void
+}) {
+  const g = machine
+  const solo = g.mode === 'solo'
+  // 게스트는 자기를 왼쪽에 두고 본다 (호스트/게스트 모두 "나"가 왼쪽)
+  const mirror = g.online === 'guest'
+  const result = g.phase === 'result'
+  const L = g.last
+
+  /** 진영별 자세 — 총알 도착(impact) 전에는 아직 맞지 않은 상태 */
+  const poseOf = (side: 1 | 2): Pose => {
+    if (!result || L.pending) return 'ready'
+    if (g.impact && L.koSide === side) return 'dead'
+    if (L.tie || L.winner === side) return 'draw'
+    if (g.impact && L.winner !== 0) return 'hit'
+    return 'ready'
+  }
+
+  /** HP 표시 — 총알이 닿기 전에는 아직 깎이지 않은 값 */
+  const hpOf = (side: 1 | 2) => {
+    const base = side === 1 ? g.hp1 : g.hp2
+    return result && !g.impact && L.hitSide === side ? base + 1 : base
+  }
+
+  const nameOf = (side: 1 | 2) => {
+    if (solo) return side === 1 ? '나' : '무법자'
+    if (g.online) return (g.online === 'host') === (side === 1) ? '나' : '상대'
+    return side === 1 ? 'P1' : 'P2'
+  }
+
+  const build = (side: 1 | 2, outfit: Outfit): Fighter => ({
+    name: nameOf(side),
+    pose: poseOf(side),
+    outfit,
+    hp: hpOf(side),
+    ms: result ? (side === 1 ? L.ms1 : L.ms2) : null,
+    meter: solo ? (side === 1 ? 'rounds' : 'none') : 'hp',
+  })
+
+  const left = build(mirror ? 2 : 1, OUTFIT_LEFT)
+  const right = build(mirror ? 1 : 2, OUTFIT_RIGHT)
+  const viewWinner: 0 | 1 | 2 = L.winner === 0 ? 0 : mirror ? (L.winner === 1 ? 2 : 1) : L.winner
+
+  // 기록 도전은 승패 대신 ms + 등급을 크게 보여준다
+  let override: { big: string; sub: string; color: string } | null = null
+  if (solo && result && !L.pending) {
+    const v = L.ms1
+    if (isClean(v)) {
+      const r = rankOf(v)
+      override = { big: `${v}ms`, sub: `${r.title}`, color: r.color }
+    } else if (v === FOUL) {
+      override = { big: '성급했다', sub: '신호를 기다려야 한다', color: '#f87171' }
+    } else {
+      override = { big: '놓쳤다', sub: '무법자가 먼저 뽑았다', color: '#f87171' }
+    }
+  }
+
+  return (
+    <Arena
+      phase={g.phase === 'waiting' ? 'waiting' : g.phase === 'signal' ? 'signal' : 'result'}
+      round={g.round}
+      maxHp={MAX_HP}
+      totalRounds={SOLO_ROUNDS}
+      left={left}
+      right={right}
+      winner={viewWinner}
+      tie={L.tie}
+      ko={!solo && L.over}
+      pending={L.pending}
+      hint={hint}
+      actLabel={actLabel}
+      fxKey={g.fx}
+      headlineOverride={override}
+    >
+      {/* 조작 영역 — duo 는 좌/우로 나눠 두 사람이 잡는다 */}
+      {g.mode === 'duo' ? (
+        <>
+          <button
+            aria-label="P1 뽑기"
+            onPointerDown={(e) => {
+              e.preventDefault()
+              onTap(1)
+            }}
+            className="absolute inset-y-0 left-0 w-1/2 touch-none"
+          />
+          <button
+            aria-label="P2 뽑기"
+            onPointerDown={(e) => {
+              e.preventDefault()
+              onTap(2)
+            }}
+            className="absolute inset-y-0 right-0 w-1/2 touch-none"
+          />
+          <div className="absolute inset-y-0 left-1/2 w-px bg-white/10 pointer-events-none" />
+          <div className="absolute bottom-3 inset-x-0 flex justify-around text-[10px] label-mono text-white/45 pointer-events-none">
+            <span>← P1 {likelyKeyboard && '· A'}</span>
+            <span>{likelyKeyboard && 'L · '}P2 →</span>
+          </div>
+        </>
+      ) : g.mode === 'duo-phone' ? (
+        <div className="absolute bottom-3 inset-x-0 text-center text-[10px] label-mono text-white/45 pointer-events-none">
+          📱 P1 · 각자 폰을 휘둘러 뽑는다 · P2 📱
+        </div>
+      ) : (
+        <button
+          aria-label="뽑기"
+          onPointerDown={(e) => {
+            e.preventDefault()
+            onTap(g.online === 'guest' ? 2 : 1)
+          }}
+          className="absolute inset-0 touch-none"
+        />
+      )}
+    </Arena>
+  )
+}
+
+/* ============================================================
+   입력 상태 배지
+   ============================================================ */
+function InputBadge({
+  phoneConnected,
+  motionOn,
+  permission,
+}: {
+  phoneConnected: boolean
+  motionOn: boolean
+  permission: string
+}) {
+  if (phoneConnected)
+    return (
+      <span className="text-xs rounded-full px-3 py-1 border border-[#4ade80]/60 text-[#4ade80] bg-black/40">
+        🎮 폰 휘두르기
+      </span>
+    )
+  if (likelyKeyboard)
+    return (
+      <span className="text-xs rounded-full px-3 py-1 border border-[#fbbf24]/60 text-[#fbbf24] bg-black/40">
+        ⌨️ Space
+      </span>
+    )
+  if (motionOn)
+    return (
+      <span
+        className={`text-xs rounded-full px-3 py-1 border bg-black/40 ${
+          permission === 'granted'
+            ? 'border-[#4ade80]/60 text-[#4ade80]'
+            : 'border-white/20 text-white/50'
+        }`}
+      >
+        {permission === 'granted' ? '📳 휘두르기 ON' : '📳 탭으로 진행'}
+      </span>
+    )
+  return null
+}
+
+/* ============================================================
+   메뉴 — 석양 배경 위 결투 포스터
+   ============================================================ */
 function Menu({
   phoneCount,
-  onSelect,
-  onDuoPhone,
-  onOnline,
+  onPick,
 }: {
   phoneCount: number
-  onSelect: (m: 'solo' | 'duo') => void
-  onDuoPhone: () => void
-  onOnline: () => void
+  onPick: (c: 'solo' | 'duo' | 'duo-phone' | 'online') => void
 }) {
-  const twoPhonesReady = phoneCount >= 2
+  const twoPhones = phoneCount >= 2
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-6">
-      <div className="text-6xl mb-3 animate-pulse-slow">⚡</div>
-      <h1
-        className="text-3xl font-black tracking-tight mb-1"
-        style={{ textShadow: '0 0 24px rgba(239,68,68,0.6)' }}
-      >
-        반응속도 배틀
-      </h1>
-      <p className="text-white/50 text-sm text-center mb-8 leading-relaxed">
-        초록 신호가 뜨는 <b className="text-white">그 순간</b> 폰을 <b className="text-white">확! 휘둘러</b> 뽑기!
-        <br />
-        신호 전에 움직이면 부정 출발이에요. (권총 뽑기 결투처럼)
-      </p>
-      <div className="flex flex-col gap-3 w-full max-w-xs">
-        <button
-          onClick={() => onSelect('solo')}
-          className="px-6 py-4 rounded-2xl font-black text-lg active:brightness-110"
-          style={{ background: 'linear-gradient(120deg,#f59e0b,#ef4444)', boxShadow: '0 8px 24px rgba(239,68,68,0.3)' }}
-        >
-          🤠 혼자 · 뽑기 기록 도전
-        </button>
-        {/* 폰 2대 버저 2인 대결 — 노트북=신호화면, 폰 2대가 버저 (멀티 컨트롤러) */}
-        <button
-          onClick={() => twoPhonesReady && onDuoPhone()}
-          disabled={!twoPhonesReady}
-          className={`px-6 py-4 rounded-2xl font-black text-lg border ${
-            twoPhonesReady
-              ? 'bg-white/10 active:bg-white/20 border-[#f59e0b]/40 text-[#fbbf24]'
-              : 'bg-white/5 border-white/10 text-white/40'
-          }`}
-        >
-          📱📱 2인 · 폰 2대 버저 대결 (5판 3선)
-          <span className="block text-xs font-semibold mt-0.5 opacity-90">
-            {twoPhonesReady
-              ? `폰 ${phoneCount}대 연결됨 · 시작!`
-              : `게임 선택 화면에서 폰 2대 연결 필요 (현재 ${phoneCount}대)`}
-          </span>
-        </button>
-        <button
-          onClick={onOnline}
-          className="px-6 py-4 rounded-2xl font-black text-lg bg-white/10 active:bg-white/20 border border-[#f59e0b]/40 text-[#fbbf24]"
-        >
-          🔫 온라인 1:1 · 폰 뽑기 결투 (5판 3선)
-        </button>
-        <button
-          onClick={() => onSelect('duo')}
-          className="px-6 py-3 rounded-2xl font-bold text-sm bg-white/8 active:bg-white/15 text-white/70"
-        >
-          🤜 2인 · 한 폰 나눠 탭 (위/아래)
-        </button>
-      </div>
-      {likelyKeyboard ? (
-        <div className="mt-7 flex flex-col items-center gap-1.5 text-center">
-          <span className="text-white/45 text-xs">⌨️ 노트북/PC 조작</span>
-          <div className="flex items-center gap-1.5 text-xs text-white/70">
-            <span className="flex h-7 items-center justify-center rounded-md border border-[#fbbf24]/60 bg-[#fbbf24]/10 px-3 font-black text-[#fbbf24]">
-              Space
-            </span>
-            <span className="text-white/45">혼자·온라인 반응</span>
-          </div>
-          <div className="flex items-center gap-1.5 text-xs text-white/70">
-            <span className="flex h-7 w-7 items-center justify-center rounded-md border border-white/40 bg-white/10 font-black">
-              A
-            </span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-md border border-white/40 bg-white/10 font-black">
-              L
-            </span>
-            <span className="text-white/45">2인 대결(A·L) · 마우스 클릭도 OK</span>
-          </div>
-        </div>
-      ) : (
-        <p className="text-white/35 text-xs mt-7 text-center">
-          폰을 <b className="text-white/60">휘둘러</b> 반응(센서 없으면 탭) · 2인은 한 폰을 위/아래로 탭
-        </p>
-      )}
-    </div>
-  )
-}
-
-// 조작 안내 문구 (대기 화면 / 신호 화면)
-interface ReactHint {
-  wait: string
-  act: string
-}
-
-// ── solo 플레이 (풀스크린 한 장) ──
-function SoloPlay({
-  machine,
-  hint,
-  onReact,
-}: {
-  machine: Machine
-  hint: ReactHint
-  onReact: () => void
-}) {
-  const g = machine
-  return (
-    <button
-      onPointerDown={(e) => {
-        e.preventDefault()
-        onReact()
-      }}
-      className="flex-1 w-full flex flex-col items-center justify-center touch-none transition-colors duration-100"
-      style={{ background: panelBg(g.phase, g.last) }}
-    >
-      <Progress round={g.round} total={ROUNDS} />
-      <PanelContent phase={g.phase} last={g.last} hint={hint} />
-    </button>
-  )
-}
-
-// ── duo 플레이 (위/아래 반반, 위쪽은 180° 회전해서 마주보고 플레이) ──
-function DuoPlay({
-  machine,
-  onReact,
-}: {
-  machine: Machine
-  onReact: (p: 1 | 2) => void
-}) {
-  const g = machine
-  const bg = panelBg(g.phase, g.last)
-  // 노트북 키보드면 각 플레이어가 누를 키(A/L)를, 아니면 탭을 안내
-  const duoHint = (p: 1 | 2): ReactHint =>
-    likelyKeyboard
-      ? { wait: `🔴 초록 뜨면 ${DUO_KEYS[p].label}!`, act: `${DUO_KEYS[p].label} 키!` }
-      : { wait: '🔴 초록 뜨면 탭!', act: 'TAP' }
-  return (
-    <div className="flex-1 w-full flex flex-col">
-      {/* 위쪽(P1) — 회전 */}
-      <button
-        onPointerDown={(e) => {
-          e.preventDefault()
-          onReact(1)
-        }}
-        className="flex-1 w-full flex flex-col items-center justify-center touch-none border-b-2 border-black/40 rotate-180 transition-colors duration-100"
-        style={{ background: g.phase === 'result' ? duoHalfBg(g, 1) : bg }}
-      >
-        <span className="label-mono text-white/50 mb-1">
-          P1 · {g.winsP1}승{likelyKeyboard && ` · ${DUO_KEYS[1].label}키`}
-        </span>
-        <PanelContent phase={g.phase} last={g.last} player={1} hint={duoHint(1)} />
-      </button>
-      {/* 아래쪽(P2) */}
-      <button
-        onPointerDown={(e) => {
-          e.preventDefault()
-          onReact(2)
-        }}
-        className="flex-1 w-full flex flex-col items-center justify-center touch-none transition-colors duration-100"
-        style={{ background: g.phase === 'result' ? duoHalfBg(g, 2) : bg }}
-      >
-        <span className="label-mono text-white/50 mb-1">
-          P2 · {g.winsP2}승{likelyKeyboard && ` · ${DUO_KEYS[2].label}키`}
-        </span>
-        <PanelContent phase={g.phase} last={g.last} player={2} hint={duoHint(2)} />
-      </button>
-    </div>
-  )
-}
-
-// ── 폰 2대 버저 2인 플레이 (노트북=공유 신호 화면, 폰 2대가 버저) ──
-function DuoPhonePlay({ machine }: { machine: Machine }) {
-  const g = machine
-  const bg = panelBg(g.phase, g.last)
-  return (
-    <div
-      className="flex-1 w-full flex flex-col items-center justify-center transition-colors duration-100"
-      style={{ background: bg }}
-    >
-      {/* 점수 HUD: P1 : P2 */}
-      <div className="absolute top-14 flex items-center gap-3 pointer-events-none">
-        <span className="label-mono text-white/60">📱 P1</span>
-        <span className="text-2xl font-black tabular-nums text-white">{g.winsP1}</span>
-        <span className="text-white/30 font-black">:</span>
-        <span className="text-2xl font-black tabular-nums text-white">{g.winsP2}</span>
-        <span className="label-mono text-white/60">P2 📱</span>
-      </div>
-
-      {g.phase === 'waiting' && (
-        <div className="flex flex-col items-center pointer-events-none">
-          <div className="text-2xl font-black text-white/85">가만히…</div>
-          <div className="text-sm text-white/60 mt-1">🔴 초록이 되면 각자 폰을 휘둘러!</div>
-        </div>
-      )}
-      {g.phase === 'signal' && (
-        <div className="flex flex-col items-center pointer-events-none">
-          <div className="text-6xl font-black text-white animate-signal-pop drop-shadow-lg">지금!</div>
-          <div className="text-lg font-bold text-white/80 mt-1 tracking-widest">휘둘러!</div>
-        </div>
-      )}
-      {g.phase === 'result' && (
-        <div className="flex flex-col items-center pointer-events-none">
-          {g.last.falseStart ? (
-            <>
-              <div className="text-4xl font-black text-[#f87171]">부정출발! 🚫</div>
-              <div className="text-xl font-black text-[#4ade80] mt-2">P{g.last.winner} 승 🎉</div>
-            </>
-          ) : (
-            <>
-              <div className="text-4xl font-black text-[#4ade80]">P{g.last.winner} 승! 🎉</div>
-              <div className="text-2xl font-black tabular-nums text-white mt-2">
-                {g.last.ms}
-                <span className="text-base ml-1">ms</span>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-      <p className="absolute bottom-6 text-white/40 text-xs pointer-events-none text-center px-6">
-        📱📱 폰 2대 버저 — 초록 신호에 먼저 휘두른 폰이 승 (신호 전이면 부정출발)
-      </p>
-    </div>
-  )
-}
-
-// ── 온라인 플레이 (풀스크린 1인칭 + 점수 HUD) ──
-function OnlinePlay({
-  machine,
-  role,
-  hint,
-  onReact,
-}: {
-  machine: Machine
-  role: 'host' | 'guest'
-  hint: ReactHint
-  onReact: () => void
-}) {
-  const g = machine
-  const myWins = role === 'host' ? g.winsP1 : g.winsP2
-  const oppWins = role === 'host' ? g.winsP2 : g.winsP1
-  const me = role === 'host' ? 1 : 2
-  // 배경: 대기(적)·신호(녹) 는 공통, 결과는 승패로 색을 정함
-  let bg = panelBg(g.phase, g.last)
-  if (g.phase === 'result') {
-    if (g.last.pending) bg = 'linear-gradient(160deg,#0f172a,#020617)'
-    else if (g.last.winner === 0) bg = 'linear-gradient(160deg,#1e293b,#020617)'
-    else if (g.last.winner === me)
-      bg = 'radial-gradient(circle at 50% 45%, #4ade80, #16a34a 75%)'
-    else bg = 'linear-gradient(160deg,#7f1d1d,#1a0505)'
-  }
-  return (
-    <button
-      onPointerDown={(e) => {
-        e.preventDefault()
-        onReact()
-      }}
-      className="flex-1 w-full flex flex-col items-center justify-center touch-none transition-colors duration-100"
-      style={{ background: bg }}
-    >
-      {/* 점수 HUD */}
-      <div className="absolute top-14 flex items-center gap-2.5 pointer-events-none">
-        <span className="label-mono text-white/55">나</span>
-        <span className="text-2xl font-black tabular-nums text-white">{myWins}</span>
-        <span className="text-white/30 font-black">:</span>
-        <span className="text-2xl font-black tabular-nums text-white/70">{oppWins}</span>
-        <span className="label-mono text-white/55">상대</span>
-      </div>
-
-      {g.phase === 'waiting' && (
-        <div className="flex flex-col items-center pointer-events-none">
-          <div className="text-2xl font-black text-white/85">가만히…</div>
-          <div className="text-sm text-white/50 mt-1">{hint.wait}</div>
-        </div>
-      )}
-      {g.phase === 'signal' && (
-        <div className="flex flex-col items-center pointer-events-none">
-          <div className="text-6xl font-black text-white animate-signal-pop drop-shadow-lg">지금!</div>
-          <div className="text-lg font-bold text-white/80 mt-1 tracking-widest">{hint.act}</div>
-        </div>
-      )}
-      {g.phase === 'result' && <OnlineResult last={g.last} role={role} />}
-    </button>
-  )
-}
-
-// 온라인 라운드 결과 텍스트 (내 반응 vs 상대 반응)
-function OnlineResult({ last, role }: { last: Machine['last']; role: 'host' | 'guest' }) {
-  const me = role === 'host' ? 1 : 2
-  const fmt = (v: number) => (v === -1 ? '부정출발' : `${v}ms`)
-  if (last.pending) {
-    return (
-      <div className="flex flex-col items-center pointer-events-none">
-        {last.falseStart ? (
-          <div className="text-3xl font-black text-[#f87171]">너무 빨라! 🚫</div>
-        ) : (
-          <div className="text-5xl font-black tabular-nums text-white">
-            {last.ms}
-            <span className="text-xl ml-1">ms</span>
-          </div>
-        )}
-        <div className="text-sm text-white/60 mt-3 animate-pulse">상대 기다리는 중…</div>
-      </div>
-    )
-  }
-  const iWon = last.winner === me
-  const draw = last.winner === 0
-  return (
-    <div className="flex flex-col items-center pointer-events-none">
+    <div className="relative flex-1 w-full overflow-y-auto">
+      {/* 배경: 석양 */}
       <div
-        className="text-4xl font-black"
-        style={{ color: draw ? '#e2e8f0' : iWon ? '#4ade80' : '#f87171' }}
-      >
-        {draw ? '무승부' : iWon ? '승! 🎉' : '졌다 😢'}
-      </div>
-      <div className="flex gap-5 mt-3 text-sm">
-        <span className="text-white/85">
-          나 <b className="tabular-nums">{fmt(last.ms)}</b>
-        </span>
-        <span className="text-white/50">
-          상대 <b className="tabular-nums">{fmt(last.oppMs ?? -1)}</b>
-        </span>
-      </div>
-    </div>
-  )
-}
+        className="absolute inset-0"
+        style={{
+          background:
+            'linear-gradient(#170817 0%, #3d1230 30%, #86302c 58%, #cf5f2c 80%, #f2a545 100%)',
+        }}
+      />
+      <div
+        className="absolute inset-x-0 bottom-0"
+        style={{ height: '30%', background: 'linear-gradient(#7c3f22 0%, #2a1010 45%, #0a0405 100%)' }}
+      />
+      <div
+        className="absolute inset-0"
+        style={{ background: 'radial-gradient(110% 80% at 50% 46%, transparent 34%, rgba(6,2,4,0.8) 100%)' }}
+      />
 
-// ── 온라인 종료 ──
-function OnlineOver({
-  machine,
-  role,
-  onRestart,
-  onExit,
-}: {
-  machine: Machine
-  role: 'host' | 'guest'
-  onRestart: () => void
-  onExit: () => void
-}) {
-  const g = machine
-  const myWins = role === 'host' ? g.winsP1 : g.winsP2
-  const oppWins = role === 'host' ? g.winsP2 : g.winsP1
-  const iWin = myWins > oppWins
-  return (
-    <div className="flex-1 flex flex-col items-center justify-center px-6">
-      <div className="text-6xl mb-2">{iWin ? '🏆' : '😢'}</div>
-      <h2 className="text-3xl font-black mb-2" style={{ color: iWin ? '#4ade80' : '#f87171' }}>
-        {iWin ? '승리!' : '패배'}
-      </h2>
-      <div className="text-2xl font-black tabular-nums text-white/90 mb-6">
-        {myWins} : {oppWins}
-      </div>
-      {role === 'host' ? (
-        <button
-          onClick={onRestart}
-          className="px-8 py-3 rounded-2xl font-black active:brightness-110"
-          style={{ background: 'linear-gradient(120deg,#f59e0b,#ef4444)' }}
+      <div className="relative flex flex-col items-center px-6 pt-14 pb-8 min-h-full">
+        {/* 마주 선 두 총잡이 */}
+        <div className="flex items-end justify-center gap-6 mb-1" style={{ height: 116 }}>
+          <Gunslinger pose="ready" outfit={OUTFIT_LEFT} height={112} />
+          <div className="pb-8 text-3xl">💥</div>
+          <Gunslinger pose="ready" outfit={OUTFIT_RIGHT} flip height={112} />
+        </div>
+
+        <div className="label-mono text-[#ffcf8a]">WILD WEST</div>
+        <h1
+          className="text-[30px] leading-tight font-black tracking-tight text-center mt-0.5"
+          style={{ color: '#fff3d6', textShadow: '0 0 28px rgba(239,68,68,0.7), 0 3px 0 rgba(0,0,0,0.5)' }}
         >
-          다시 대결
-        </button>
-      ) : (
-        <p className="text-sm text-white/50">방장이 다시 시작하면 이어집니다…</p>
-      )}
-      <button onClick={onExit} className="mt-3 text-sm text-white/50 underline">
-        다른 게임 고르기
-      </button>
+          황야의 퀵드로우
+        </h1>
+        <p className="text-white/65 text-[13px] text-center mt-2 mb-6 leading-relaxed max-w-xs">
+          신호등이 <b className="text-[#4ade80]">초록</b>으로 바뀌는 순간 먼저 뽑는다.
+          <br />
+          <b className="text-white">3발</b> 맞으면 쓰러진다. 신호 전에 뽑으면 부정출발.
+        </p>
+
+        <div className="flex flex-col gap-2.5 w-full max-w-xs">
+          <PickButton
+            onClick={() => onPick('solo')}
+            primary
+            emoji="🤠"
+            title="혼자 · 뽑기 기록 도전"
+            sub={`${SOLO_ROUNDS}라운드 · ms 측정 + 총잡이 등급`}
+          />
+          <PickButton
+            onClick={() => onPick('online')}
+            emoji="🔫"
+            title="온라인 1:1 결투"
+            sub={`멀리 있는 상대와 · 먼저 ${MAX_HP}발 맞히면 승`}
+          />
+          <PickButton
+            onClick={() => twoPhones && onPick('duo-phone')}
+            disabled={!twoPhones}
+            emoji="📱📱"
+            title="2인 · 폰 2대 결투"
+            sub={
+              twoPhones
+                ? `폰 ${phoneCount}대 연결됨 · 각자 폰을 휘둘러 뽑기`
+                : `허브에서 폰 2대 연결 필요 (현재 ${phoneCount}대)`
+            }
+          />
+          <PickButton
+            onClick={() => onPick('duo')}
+            emoji="🤜"
+            title="2인 · 한 폰 나눠 잡고"
+            sub={likelyKeyboard ? '왼쪽 A · 오른쪽 L' : '화면 왼쪽 = P1 · 오른쪽 = P2'}
+          />
+        </div>
+
+        <p className="text-white/35 text-[11px] mt-6 text-center max-w-xs leading-relaxed">
+          1ms 까지 똑같으면 <b className="text-white/60">TIE</b> — 체력 변화 없이 다시 붙는다
+        </p>
+      </div>
     </div>
   )
 }
 
-// 패널 배경색 — 대기(짙은 적)·신호(폭발 녹)·결과(중립/녹/적)
-function panelBg(phase: Phase, last: Machine['last']): string {
-  if (phase === 'signal') return 'radial-gradient(circle at 50% 45%, #4ade80, #16a34a 70%, #15803d)'
-  if (phase === 'waiting') return 'radial-gradient(circle at 50% 40%, #7f1d1d, #450a0a 75%, #1a0505)'
-  // result
-  if (last.falseStart) return 'linear-gradient(160deg,#7f1d1d,#450a0a)'
-  return 'linear-gradient(160deg,#0f172a,#020617)'
-}
-
-// duo 결과: 이긴 쪽만 초록으로 강조
-function duoHalfBg(g: Machine, player: 1 | 2): string {
-  if (g.last.winner === player) return 'radial-gradient(circle at 50% 45%, #4ade80, #16a34a 75%)'
-  return 'linear-gradient(160deg,#1a0505,#0a0203)'
-}
-
-// 패널 안 텍스트 (상태별). hint 로 대기/신호 안내 문구를 받는다(기기·모드별로 다름).
-function PanelContent({
-  phase,
-  last,
-  player,
-  hint,
+function PickButton({
+  onClick,
+  emoji,
+  title,
+  sub,
+  primary = false,
+  disabled = false,
 }: {
-  phase: Phase
-  last: Machine['last']
-  player?: 1 | 2
-  hint?: ReactHint
+  onClick: () => void
+  emoji: string
+  title: string
+  sub: string
+  primary?: boolean
+  disabled?: boolean
 }) {
-  if (phase === 'waiting') {
-    return (
-      <div className="flex flex-col items-center pointer-events-none">
-        <div className="text-2xl font-black text-white/85">가만히…</div>
-        <div className="text-sm text-white/50 mt-1">{hint?.wait ?? '🔴 초록이 되면 탭!'}</div>
-      </div>
-    )
-  }
-  if (phase === 'signal') {
-    return (
-      <div className="flex flex-col items-center pointer-events-none">
-        <div className="text-6xl font-black text-white animate-signal-pop drop-shadow-lg">지금!</div>
-        <div className="text-lg font-bold text-white/80 mt-1 tracking-widest">
-          {hint?.act ?? 'TAP'}
-        </div>
-      </div>
-    )
-  }
-  // result
-  if (last.falseStart) {
-    // duo 에선 부정 출발한 당사자에게만 "너무 빨라!", 상대에겐 "승!"
-    if (player && last.winner) {
-      const iWon = last.winner === player
-      return (
-        <div className="flex flex-col items-center pointer-events-none">
-          <div className="text-3xl font-black" style={{ color: iWon ? '#4ade80' : '#f87171' }}>
-            {iWon ? '승! 🎉' : '너무 빨라! 🚫'}
-          </div>
-        </div>
-      )
-    }
-    return (
-      <div className="flex flex-col items-center pointer-events-none">
-        <div className="text-4xl font-black text-[#f87171]">너무 빨라! 🚫</div>
-        <div className="text-sm text-white/50 mt-2">신호를 기다렸다가 누르세요</div>
-      </div>
-    )
-  }
-  // 정상 반응
-  const r = rankOf(last.ms)
-  if (player) {
-    const iWon = last.winner === player
-    return (
-      <div className="flex flex-col items-center pointer-events-none">
-        <div className="text-3xl font-black" style={{ color: iWon ? '#4ade80' : '#94a3b8' }}>
-          {iWon ? `승! ${last.ms}ms` : '아쉽다'}
-        </div>
-      </div>
-    )
-  }
   return (
-    <div className="flex flex-col items-center pointer-events-none">
-      <div className="text-6xl font-black tabular-nums" style={{ color: r.color }}>
-        {last.ms}
-        <span className="text-2xl ml-1">ms</span>
-      </div>
-      <div className="text-lg font-bold mt-2" style={{ color: r.color }}>
-        {r.emoji} {r.title}
-      </div>
-    </div>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="w-full text-left rounded-2xl px-4 py-3 border active:brightness-110 transition"
+      style={
+        disabled
+          ? { background: 'rgba(255,255,255,0.05)', borderColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.4)' }
+          : primary
+            ? {
+                background: 'linear-gradient(120deg,#f59e0b,#e0483a)',
+                borderColor: 'rgba(255,220,160,0.4)',
+                boxShadow: '0 8px 22px rgba(224,72,58,0.35)',
+              }
+            : {
+                background: 'rgba(20,8,12,0.6)',
+                borderColor: 'rgba(245,158,11,0.4)',
+                color: '#ffd9a0',
+              }
+      }
+    >
+      <span className="flex items-center gap-2.5">
+        <span className="text-xl leading-none">{emoji}</span>
+        <span className="flex-1">
+          <span className="block font-black text-[15px]">{title}</span>
+          <span className="block text-[11px] opacity-80 mt-0.5">{sub}</span>
+        </span>
+      </span>
+    </button>
   )
 }
 
-// 라운드 진행 점 (solo)
-function Progress({ round, total }: { round: number; total: number }) {
-  return (
-    <div className="absolute top-14 flex gap-1.5 pointer-events-none">
-      {Array.from({ length: total }).map((_, i) => (
-        <span
-          key={i}
-          className="h-1.5 rounded-full transition-all"
-          style={{
-            width: i + 1 === round ? 18 : 7,
-            background: i + 1 <= round ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.25)',
-          }}
-        />
-      ))}
-    </div>
-  )
-}
-
-// ── 종료 화면 ──
-function Over({
+/* ============================================================
+   결과 — 기록 도전 (현상금 포스터)
+   ============================================================ */
+function SoloVerdict({
   machine,
   onRetry,
   onExit,
@@ -1102,81 +945,158 @@ function Over({
   onExit: () => void
 }) {
   const g = machine
-  if (g.mode === 'solo') {
-    const valid = g.soloTimes.filter((t) => t > 0)
-    const best = valid.length ? Math.min(...valid) : 0
-    const avg = valid.length ? Math.round(valid.reduce((a, b) => a + b, 0) / valid.length) : 0
-    const fouls = g.soloTimes.filter((t) => t < 0).length
-    const r = best ? rankOf(best) : { title: '기록 없음', emoji: '🤔', color: '#94a3b8' }
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center px-6">
-        <div className="text-5xl mb-2">{r.emoji}</div>
-        <h2 className="text-2xl font-black mb-1" style={{ color: r.color }}>
+  const valid = g.soloTimes.filter(isClean)
+  const best = valid.length ? Math.min(...valid) : 0
+  const avg = valid.length ? Math.round(valid.reduce((a, b) => a + b, 0) / valid.length) : 0
+  const r = best ? rankOf(best) : { title: '기록 없음', sub: '한 발도 못 뽑았다', color: '#94a3b8' }
+
+  return (
+    <div className="flex-1 w-full overflow-y-auto flex items-center justify-center px-5 py-14"
+      style={{ background: 'linear-gradient(#1a0a12, #3a1520 60%, #120608)' }}
+    >
+      {/* 현상금 포스터 */}
+      <div
+        className="w-full max-w-sm rounded-sm px-6 py-6 text-center"
+        style={{
+          background: 'linear-gradient(#e8d5ac, #d8bf90 60%, #c9ac78)',
+          color: '#2a1a0e',
+          boxShadow: '0 18px 50px rgba(0,0,0,0.6)',
+          border: '2px solid #8a6a3a',
+        }}
+      >
+        <div className="label-mono" style={{ color: '#6b4a24', letterSpacing: '0.3em' }}>
+          BOUNTY REPORT
+        </div>
+        <div className="text-4xl font-black tracking-[0.12em] mt-1" style={{ color: '#3a2410' }}>
+          WANTED
+        </div>
+        <div className="my-3 border-y-2 border-dashed py-3" style={{ borderColor: '#a98a58' }}>
+          <div className="flex justify-center">
+            <Gunslinger pose="ready" outfit={OUTFIT_LEFT} height={104} />
+          </div>
+        </div>
+
+        <div className="text-2xl font-black" style={{ color: '#7a1f14' }}>
           {r.title}
-        </h2>
-        <div className="flex items-end gap-2 my-4">
-          <div className="text-center">
-            <div className="label-mono text-white/40">BEST</div>
-            <div className="text-5xl font-black tabular-nums" style={{ color: r.color }}>
+        </div>
+        <div className="text-xs mt-0.5" style={{ color: '#6b4a24' }}>
+          {r.sub}
+        </div>
+
+        <div className="mt-4 flex items-end justify-center gap-6">
+          <div>
+            <div className="label-mono" style={{ color: '#6b4a24' }}>
+              BEST
+            </div>
+            <div className="text-4xl font-black tabular-nums leading-none" style={{ color: '#7a1f14' }}>
               {best || '--'}
-              <span className="text-xl ml-1">ms</span>
+              <span className="text-lg ml-0.5">ms</span>
+            </div>
+          </div>
+          <div>
+            <div className="label-mono" style={{ color: '#6b4a24' }}>
+              AVG
+            </div>
+            <div className="text-2xl font-black tabular-nums leading-none" style={{ color: '#3a2410' }}>
+              {avg || '--'}
+              <span className="text-sm ml-0.5">ms</span>
             </div>
           </div>
         </div>
-        <div className="flex gap-6 text-sm text-white/70 mb-1">
-          <span>
-            평균 <b className="text-white tabular-nums">{avg || '--'}ms</b>
-          </span>
-          <span>
-            부정출발 <b className="text-[#f87171] tabular-nums">{fouls}</b>
-          </span>
-        </div>
+
         {/* 라운드별 기록 */}
-        <div className="flex gap-1.5 mt-4 flex-wrap justify-center max-w-xs">
-          {g.soloTimes.map((t, i) => (
+        <div className="flex gap-1.5 mt-4 flex-wrap justify-center">
+          {g.soloTimes.map((v, i) => (
             <span
               key={i}
-              className="text-xs font-bold tabular-nums rounded-lg px-2 py-1"
+              className="text-[11px] font-black tabular-nums rounded px-2 py-1"
               style={{
-                background: t < 0 ? 'rgba(248,113,113,0.15)' : 'rgba(255,255,255,0.08)',
-                color: t < 0 ? '#f87171' : '#e2e8f0',
+                background: isClean(v) ? 'rgba(58,36,16,0.12)' : 'rgba(122,31,20,0.18)',
+                color: isClean(v) ? '#3a2410' : '#7a1f14',
+                border: '1px solid rgba(107,74,36,0.3)',
               }}
             >
-              {t < 0 ? 'FOUL' : `${t}`}
+              {isClean(v) ? v : v === FOUL ? 'FOUL' : 'MISS'}
             </span>
           ))}
         </div>
+
         <button
           onClick={onRetry}
-          className="mt-8 px-8 py-3 rounded-2xl font-black active:brightness-110"
-          style={{ background: 'linear-gradient(120deg,#f59e0b,#ef4444)' }}
+          className="mt-6 w-full py-3 rounded-md font-black active:brightness-110"
+          style={{ background: 'linear-gradient(120deg,#8a2418,#5e160e)', color: '#f7e4c0' }}
         >
-          다시 도전
+          다시 뽑는다
         </button>
-        <button onClick={onExit} className="mt-3 text-sm text-white/50 underline">
+        <button onClick={onExit} className="mt-2 text-xs underline" style={{ color: '#6b4a24' }}>
           다른 게임 고르기
         </button>
       </div>
-    )
-  }
-  // duo
-  const p1Win = g.winsP1 > g.winsP2
+    </div>
+  )
+}
+
+/* ============================================================
+   결과 — 결투 (2인 / 온라인)
+   ============================================================ */
+function DuelVerdict({
+  machine,
+  onRetry,
+  onExit,
+}: {
+  machine: Machine
+  onRetry: () => void
+  onExit: () => void
+}) {
+  const g = machine
+  const p1Alive = g.hp1 > 0
+  // 온라인은 "나" 기준으로 승패를 말한다
+  const iWin = g.online ? (g.online === 'host' ? p1Alive : !p1Alive) : false
+  const winnerSide: 1 | 2 = p1Alive ? 1 : 2
+  const outfit = winnerSide === 1 ? OUTFIT_LEFT : OUTFIT_RIGHT
+  const guest = g.online === 'guest'
+
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-6">
-      <div className="text-5xl mb-2">🏆</div>
-      <h2 className="text-3xl font-black mb-2" style={{ color: p1Win ? '#22d3ee' : '#f59e0b' }}>
-        P{p1Win ? 1 : 2} 승리!
-      </h2>
-      <div className="text-2xl font-black tabular-nums text-white/90 mb-6">
-        {g.winsP1} : {g.winsP2}
+    <div
+      className="flex-1 w-full flex flex-col items-center justify-center px-6"
+      style={{ background: 'linear-gradient(#170817, #4a1622 58%, #0d0406)' }}
+    >
+      {/* 이긴 총잡이가 총을 내려놓고 서 있다 */}
+      <div style={{ height: 150 }} className="flex items-end">
+        <Gunslinger pose="ready" outfit={outfit} flip={winnerSide === 2} height={150} />
       </div>
-      <button
-        onClick={onRetry}
-        className="px-8 py-3 rounded-2xl font-black active:brightness-110"
-        style={{ background: 'linear-gradient(120deg,#f59e0b,#ef4444)' }}
+
+      <div className="label-mono mt-3" style={{ color: '#ffcf8a', letterSpacing: '0.3em' }}>
+        LAST MAN STANDING
+      </div>
+      <h2
+        className="text-3xl font-black mt-1"
+        style={{
+          color: g.online ? (iWin ? '#86efac' : '#fca5a5') : outfit.scarf,
+          textShadow: '0 0 26px rgba(0,0,0,0.6)',
+        }}
       >
-        다시 대결
-      </button>
+        {g.online ? (iWin ? '살아남았다' : '쓰러졌다') : `P${winnerSide} 승리!`}
+      </h2>
+
+      {/* 남은 탄약으로 스코어 표시 */}
+      <div className="flex items-center gap-4 mt-4 mb-7">
+        <SideScore label={g.online ? (g.online === 'host' ? '나' : '상대') : 'P1'} hp={g.hp1} outfit={OUTFIT_LEFT} />
+        <span className="text-white/25 font-black">:</span>
+        <SideScore label={g.online ? (g.online === 'guest' ? '나' : '상대') : 'P2'} hp={g.hp2} outfit={OUTFIT_RIGHT} />
+      </div>
+
+      {guest ? (
+        <p className="text-sm text-white/50">상대가 다시 시작하면 이어집니다…</p>
+      ) : (
+        <button
+          onClick={onRetry}
+          className="px-8 py-3 rounded-2xl font-black active:brightness-110"
+          style={{ background: 'linear-gradient(120deg,#f59e0b,#e0483a)' }}
+        >
+          다시 결투
+        </button>
+      )}
       <button onClick={onExit} className="mt-3 text-sm text-white/50 underline">
         다른 게임 고르기
       </button>
@@ -1184,3 +1104,30 @@ function Over({
   )
 }
 
+function SideScore({ label, hp, outfit }: { label: string; hp: number; outfit: Outfit }) {
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <span className="text-xs font-black" style={{ color: outfit.scarf }}>
+        {label}
+      </span>
+      <div className="flex gap-1">
+        {Array.from({ length: MAX_HP }).map((_, i) => (
+          <span
+            key={i}
+            className="block"
+            style={{
+              width: 9,
+              height: 17,
+              borderRadius: '2px 2px 3px 3px',
+              background:
+                i < hp
+                  ? 'linear-gradient(#ffe9a8 0%, #d9a53c 34%, #8a5f18 100%)'
+                  : 'rgba(255,255,255,0.08)',
+              border: i < hp ? '1px solid #6d4a11' : '1px solid rgba(255,255,255,0.16)',
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
