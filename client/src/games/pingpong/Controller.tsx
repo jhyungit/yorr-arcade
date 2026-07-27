@@ -204,7 +204,7 @@ export default function Controller({ initialCode }: ControllerProps) {
         {isRhythm
           ? '리듬 스윙 · 컨트롤러'
           : isReaction
-            ? '반응속도 · 컨트롤러'
+            ? '퀵드로우 · 컨트롤러'
             : isSlasher
               ? '스택 슬래셔 · 컨트롤러'
               : isIdle
@@ -212,7 +212,7 @@ export default function Controller({ initialCode }: ControllerProps) {
                 : 'PING · PONG · 컨트롤러'}
       </div>
       <div className="text-5xl mt-3 mb-1">
-        {isRhythm ? '🥁' : isReaction ? '⚡' : isSlasher ? '🗡️' : isIdle ? '🎮' : '🏓'}
+        {isRhythm ? '🥁' : isReaction ? '🤠' : isSlasher ? '🗡️' : isIdle ? '🎮' : '🏓'}
       </div>
 
       {!joined ? (
@@ -244,7 +244,7 @@ export default function Controller({ initialCode }: ControllerProps) {
             {isRhythm
               ? '🥁 리듬 컨트롤러'
               : isReaction
-                ? `⚡ 반응 컨트롤러 · P${player}`
+                ? `🤠 퀵드로우 · P${player}`
                 : isSlasher
                   ? '🗡️ 슬래셔 터치패드'
                   : isIdle
@@ -331,8 +331,8 @@ export default function Controller({ initialCode }: ControllerProps) {
                 </>
               ) : isReaction ? (
                 <>
-                  노트북 화면이 <b className="text-[#4ade80]">초록(지금!)</b>이 되는 순간 폰을{' '}
-                  <b className="text-white">확! 휘둘러요.</b> (신호 전엔 가만히)
+                  노트북 화면의 신호등이 <b className="text-[#4ade80]">초록</b>이 되는 순간 폰을{' '}
+                  <b className="text-white">확! 휘둘러 뽑아요.</b> (신호 전엔 가만히 — 부정출발)
                 </>
               ) : isIdle ? (
                 <>
@@ -359,14 +359,14 @@ export default function Controller({ initialCode }: ControllerProps) {
                 style={{ background: `${accent}33`, border: `2px solid ${accent}` }}
               >
                 <span className="text-6xl">
-                  {isRhythm ? '🥁' : isReaction ? '⚡' : isIdle ? '🎮' : '🏓'}
+                  {isRhythm ? '🥁' : isReaction ? '🔫' : isIdle ? '🎮' : '🏓'}
                 </span>
               </button>
               <p className="text-white/50 text-xs mt-4">
                 {isRhythm
                   ? '버튼을 눌러도 쳐집니다'
                   : isReaction
-                    ? '버튼을 눌러도 반응됩니다'
+                    ? '버튼을 눌러도 뽑힙니다'
                     : '버튼을 눌러도 스윙됩니다'}{' '}
                 · 총 {count}회
               </p>

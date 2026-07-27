@@ -34,10 +34,10 @@ const CARDS: GameCard[] = [
   },
   {
     id: 'reaction',
-    title: '반응속도 배틀',
-    desc: '신호에 맞춰 최대한 빨리! ms 단위 반응속도 측정. 혼자 기록 갱신 or 1:1 대결.',
-    emoji: '⚡',
-    gradient: 'linear-gradient(160deg, #f59e0b 0%, #ef4444 60%, #7f1d1d 100%)',
+    title: '황야의 퀵드로우',
+    desc: '석양의 결투. 신호등이 초록으로 바뀌는 순간 먼저 뽑아라! 3발 맞으면 쓰러진다.',
+    emoji: '🤠',
+    gradient: 'linear-gradient(160deg, #f2a545 0%, #cf5f2c 42%, #86302c 72%, #3d1230 100%)',
     playable: true,
   },
   {
@@ -226,7 +226,7 @@ export default function GameHub({
             <div className="mt-2 pt-2 border-t border-[var(--line)] text-center text-xs">
               {phoneConnected ? (
                 <span className="text-[var(--pos)] font-bold">
-                  연결됨 — 게임에서 바로 사용 (반응속도는 2대면 폰 버저 대결!)
+                  연결됨 — 게임에서 바로 사용 (퀵드로우는 2대면 폰 2대 결투!)
                 </span>
               ) : (
                 <span className="text-[var(--ink-3)]">컨트롤러를 연동하세요 — 위 코드를 폰에 입력</span>

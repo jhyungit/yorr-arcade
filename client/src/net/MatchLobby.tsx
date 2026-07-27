@@ -7,7 +7,7 @@ import { socket } from './socket'
  * 핑퐁의 OnlineLobby 와 흐름은 같지만, 소켓 이벤트 접두어(prefix)를 받아
  * 어떤 게임에서도 재사용할 수 있게 일반화했다.
  *   - 리듬 탭:      prefix="rt"  → rt:create / rt:join / rt:opponent_joined
- *   - 반응속도배틀:  prefix="rx"  → rx:create / rx:join / rx:opponent_joined
+ *   - 퀵드로우:      prefix="rx"  → rx:create / rx:join / rx:opponent_joined
  *
  * A: [방 만들기] → 코드 생성 → 상대 입장 대기 → 매칭되면 host.
  * B: [코드로 참가] → 코드 입력 → 매칭되면 guest.
