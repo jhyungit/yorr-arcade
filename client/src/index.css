@@ -216,6 +216,15 @@ body {
   animation: pulse-slow 1.8s ease-in-out infinite;
 }
 
+/* 핑퐁 3D: 스매시 순간 화면 섬광 */
+@keyframes pp-flash {
+  0% { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+.animate-pp-flash {
+  animation: pp-flash 0.22s ease-out both;
+}
+
 /* =============================================================
    황야의 퀵드로우 — 결투 연출
    duel.ts 의 BULLET_MS(340) / RESULT_MS 와 길이를 맞춰야 한다.
