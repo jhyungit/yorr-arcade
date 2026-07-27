@@ -12,15 +12,16 @@ import {
   FREEZE_MS,
   GRACE_MS,
   KO_MS,
+  MAX_FOULS,
   MAX_HP,
   MISS,
   RESULT_MS,
   SOLO_ROUNDS,
   TIE_MS,
-  compareDraw,
   isClean,
   randomWait,
   rankOf,
+  resolveRound,
   type Ms,
 } from './duel'
 
@@ -32,7 +33,8 @@ import {
  *  - 신호등이 초록으로 바뀌는 순간 먼저 뽑은 쪽이 쏜다.
  *  - 1ms 까지 같으면 Tie → HP 변화 없이 다음 라운드.
  *  - 3발 맞으면 쓰러진다 (패배).
- *  - 신호 전에 뽑으면 부정출발(FOUL) → 그 라운드 즉시 패배.
+ *  - 신호 전에 뽑으면 부정출발 → 경고. 라운드 무효(상대 무피해)이고,
+ *    경고가 MAX_FOULS 개 차면 자기 발을 쏴서 본인이 1발 잃는다. (규칙은 duel.ts)
  *
  * 모드:
  *  - solo       : 기록 도전 5라운드 (ms 측정 + 총잡이 등급). 무대는 결투와 동일.
@@ -48,12 +50,14 @@ type Phase = 'menu' | 'waiting' | 'signal' | 'result' | 'over'
 interface RoundResult {
   ms1: Ms
   ms2: Ms
-  winner: 0 | 1 | 2 // 총을 쏜 쪽 (0 = Tie)
+  winner: 0 | 1 | 2 // 상대를 쏜 쪽 (0 = Tie 또는 파울 라운드)
   tie: boolean
   hitSide: 0 | 1 | 2 // HP 를 잃은 쪽
   koSide: 0 | 1 | 2 // 쓰러지는 쪽
   over: boolean // 이 라운드로 승부가 끝났는가
   pending: boolean // 온라인: 내 기록만 나오고 상대 대기중
+  foulSide: 0 | 1 | 2 // 부정출발한 쪽 (0 이 아니면 파울 라운드)
+  selfShot: boolean // 경고가 차서 자기 발을 쏜 라운드
 }
 
 /**
@@ -73,6 +77,8 @@ interface Machine {
   impact: boolean // 총알이 도착했는가 (피격 자세·HP 표시를 여기에 맞춘다)
   hp1: number
   hp2: number
+  fouls1: number // 쌓인 부정출발 경고 (MAX_FOULS 차면 자기 발을 쏜다)
+  fouls2: number
   last: RoundResult
   soloTimes: number[] // 기록 도전 결과 (FOUL/MISS 센티넬 포함)
   online: 'host' | 'guest' | null
@@ -88,6 +94,8 @@ const EMPTY_RESULT: RoundResult = {
   koSide: 0,
   over: false,
   pending: false,
+  foulSide: 0,
+  selfShot: false,
 }
 
 /** duo(한 기기 2인)를 노트북 키보드로 할 때: P1=A(왼쪽) · P2=L(오른쪽) */
@@ -116,6 +124,8 @@ export default function ReactionBattle({
     impact: false,
     hp1: MAX_HP,
     hp2: MAX_HP,
+    fouls1: 0,
+    fouls2: 0,
     last: EMPTY_RESULT,
     soloTimes: [],
     online: null,
@@ -159,41 +169,64 @@ export default function ReactionBattle({
     clearT('freeze')
 
     const solo = g.mode === 'solo'
-
-    // 승자: 부정출발이 있으면 그쪽이 무조건 패배, 아니면 더 빠른 쪽
     let winner: 0 | 1 | 2
-    if (g.foul === 1) winner = 2
-    else if (g.foul === 2) winner = 1
-    else if (solo) winner = isClean(g.ms1) ? 1 : 2
-    else winner = compareDraw(g.ms1, g.ms2)
-
-    const tie = winner === 0
+    let tie = false
     let hitSide: 0 | 1 | 2 = 0
     let koSide: 0 | 1 | 2 = 0
     let over = false
+    let foulSide: 0 | 1 | 2 = 0
+    let selfShot = false
 
     if (solo) {
+      // 기록 도전은 HP·경고를 쓰지 않는다. 부정출발은 기록에 FOUL 로 남고
+      // 그 라운드는 무법자가 먼저 뽑은 것으로 연출된다.
+      winner = isClean(g.ms1) ? 1 : 2
       g.soloTimes.push(typeof g.ms1 === 'number' ? g.ms1 : MISS)
       koSide = winner === 1 ? 2 : 0 // 이긴 라운드는 무법자가 쓰러진다
       over = g.round >= SOLO_ROUNDS
-    } else if (!tie) {
-      hitSide = winner === 1 ? 2 : 1
-      if (hitSide === 1) g.hp1 = Math.max(0, g.hp1 - 1)
-      else g.hp2 = Math.max(0, g.hp2 - 1)
-      if ((hitSide === 1 ? g.hp1 : g.hp2) <= 0) {
-        koSide = hitSide
-        over = true
-      }
+    } else {
+      const r = resolveRound({
+        ms1: g.ms1,
+        ms2: g.ms2,
+        foul: g.foul,
+        hp1: g.hp1,
+        hp2: g.hp2,
+        fouls1: g.fouls1,
+        fouls2: g.fouls2,
+      })
+      winner = r.winner
+      tie = r.tie
+      hitSide = r.hitSide
+      koSide = r.koSide
+      over = r.over
+      foulSide = r.foulSide
+      selfShot = r.kind === 'self-shot'
+      g.hp1 = r.hp1
+      g.hp2 = r.hp2
+      g.fouls1 = r.fouls1
+      g.fouls2 = r.fouls2
     }
 
     g.impact = false
-    g.last = { ms1: g.ms1, ms2: g.ms2, winner, tie, hitSide, koSide, over, pending: false }
+    g.last = {
+      ms1: g.ms1,
+      ms2: g.ms2,
+      winner,
+      tie,
+      hitSide,
+      koSide,
+      over,
+      pending: false,
+      foulSide,
+      selfShot,
+    }
     g.phase = 'result'
     render()
 
-    // 폰 버저 대결: 이긴 폰을 진동시켜 손맛
-    if (g.mode === 'duo-phone' && winner !== 0) {
-      socket.emit('game:hit', { player: winner, kind: 'react' })
+    // 폰 버저 대결: 이긴 폰(파울 라운드면 파울한 폰)을 진동시켜 손맛
+    if (g.mode === 'duo-phone') {
+      if (foulSide !== 0) socket.emit('game:hit', { player: foulSide, kind: 'foul' })
+      else if (winner !== 0) socket.emit('game:hit', { player: winner, kind: 'react' })
     }
     // 온라인 호스트: 판정 결과를 게스트에게
     if (g.online === 'host') {
@@ -204,22 +237,26 @@ export default function ReactionBattle({
         tie,
         hp1: g.hp1,
         hp2: g.hp2,
+        fouls1: g.fouls1,
+        fouls2: g.fouls2,
         koSide,
         over,
+        foulSide,
+        selfShot,
       })
     }
 
     // 총알이 닿는 순간에 맞춰 피격 자세 / HP 감소를 보여준다
     t.current.impact = window.setTimeout(() => {
       m.current.impact = true
-      if (canVibrate) navigator.vibrate(tie ? 30 : [0, 45, 25, 70])
+      // 경고만 받은 라운드는 약하게, 실제로 맞은 라운드는 강하게
+      if (canVibrate) navigator.vibrate(hitSide !== 0 ? [0, 45, 25, 70] : 30)
       render()
     }, BULLET_MS)
 
-    t.current.result = window.setTimeout(
-      () => nextRoundRef.current(),
-      over ? KO_MS : tie ? TIE_MS : RESULT_MS,
-    )
+    // 아무도 안 맞은 라운드(Tie·경고)는 짧게, 실제로 맞은 라운드는 충분히 보여준다
+    const hold = over ? KO_MS : hitSide === 0 && (tie || foulSide !== 0) ? TIE_MS : RESULT_MS
+    t.current.result = window.setTimeout(() => nextRoundRef.current(), hold)
   }, [clearT, render])
 
   /** 신호등을 초록으로 (호스트/로컬만 호출 — 게스트는 rx:signal 로 받는다) */
@@ -407,6 +444,8 @@ export default function ReactionBattle({
       if (d?.round === 1) {
         g.hp1 = MAX_HP
         g.hp2 = MAX_HP
+        g.fouls1 = 0
+        g.fouls2 = 0
       }
       if (typeof d?.round === 'number') g.round = d.round
       g.phase = 'waiting'
@@ -435,8 +474,12 @@ export default function ReactionBattle({
       tie: boolean
       hp1: number
       hp2: number
+      fouls1: number
+      fouls2: number
       koSide: 0 | 1 | 2
       over: boolean
+      foulSide: 0 | 1 | 2
+      selfShot: boolean
     }) => {
       const g = m.current
       if (g.online !== 'guest') return
@@ -446,22 +489,30 @@ export default function ReactionBattle({
       g.ms2 = d.ms2 ?? null
       g.hp1 = d.hp1
       g.hp2 = d.hp2
+      g.fouls1 = d.fouls1 ?? 0
+      g.fouls2 = d.fouls2 ?? 0
       g.impact = false
+      const foulSide = d.foulSide ?? 0
+      // 맞은 쪽: 파울 라운드면 자기 발을 쏜 본인, 아니면 쏜 쪽의 상대
+      const hitSide: 0 | 1 | 2 =
+        foulSide !== 0 ? (d.selfShot ? foulSide : 0) : d.tie ? 0 : d.winner === 1 ? 2 : 1
       g.last = {
         ms1: g.ms1,
         ms2: g.ms2,
         winner: d.winner,
         tie: d.tie,
-        hitSide: d.tie ? 0 : d.winner === 1 ? 2 : 1,
+        hitSide,
         koSide: d.koSide ?? 0,
         over: !!d.over,
         pending: false,
+        foulSide,
+        selfShot: !!d.selfShot,
       }
       g.phase = 'result'
       render()
       t.current.impact = window.setTimeout(() => {
         m.current.impact = true
-        if (canVibrate) navigator.vibrate(d.tie ? 30 : [0, 45, 25, 70])
+        if (canVibrate) navigator.vibrate(hitSide !== 0 ? [0, 45, 25, 70] : 30)
         render()
       }, BULLET_MS)
       if (d.over) {
@@ -499,6 +550,8 @@ export default function ReactionBattle({
       g.round = 1
       g.hp1 = MAX_HP
       g.hp2 = MAX_HP
+      g.fouls1 = 0
+      g.fouls2 = 0
       g.soloTimes = []
       g.last = EMPTY_RESULT
       enterWaiting()
@@ -650,6 +703,11 @@ function DuelStage({
   const poseOf = (side: 1 | 2): Pose => {
     if (!result || L.pending) return 'ready'
     if (g.impact && L.koSide === side) return 'dead'
+    // 파울 라운드: 성급하게 뽑은 쪽만 총을 들고 있고(발밑으로 쐈다), 상대는 가만히
+    if (L.foulSide !== 0) {
+      if (L.foulSide !== side) return 'ready'
+      return g.impact && L.selfShot ? 'hit' : 'draw'
+    }
     if (L.tie || L.winner === side) return 'draw'
     if (g.impact && L.winner !== 0) return 'hit'
     return 'ready'
@@ -673,12 +731,16 @@ function DuelStage({
     outfit,
     hp: hpOf(side),
     ms: result ? (side === 1 ? L.ms1 : L.ms2) : null,
+    fouls: side === 1 ? g.fouls1 : g.fouls2,
     meter: solo ? (side === 1 ? 'rounds' : 'none') : 'hp',
   })
 
   const left = build(mirror ? 2 : 1, OUTFIT_LEFT)
   const right = build(mirror ? 1 : 2, OUTFIT_RIGHT)
-  const viewWinner: 0 | 1 | 2 = L.winner === 0 ? 0 : mirror ? (L.winner === 1 ? 2 : 1) : L.winner
+  /** 진영 번호를 화면 좌우로 (게스트 화면은 뒤집혀 있다) */
+  const toView = (s: 0 | 1 | 2): 0 | 1 | 2 => (s === 0 ? 0 : mirror ? (s === 1 ? 2 : 1) : s)
+  const viewWinner = toView(L.winner)
+  const viewFoul = toView(L.foulSide)
 
   // 기록 도전은 승패 대신 ms + 등급을 크게 보여준다
   let override: { big: string; sub: string; color: string } | null = null
@@ -699,11 +761,14 @@ function DuelStage({
       phase={g.phase === 'waiting' ? 'waiting' : g.phase === 'signal' ? 'signal' : 'result'}
       round={g.round}
       maxHp={MAX_HP}
+      maxFouls={solo ? 0 : MAX_FOULS}
       totalRounds={SOLO_ROUNDS}
       left={left}
       right={right}
       winner={viewWinner}
       tie={L.tie}
+      foulSide={solo ? 0 : viewFoul}
+      selfShot={L.selfShot}
       ko={!solo && L.over}
       pending={L.pending}
       hint={hint}
@@ -841,8 +906,22 @@ function Menu({
         <p className="text-white/65 text-[13px] text-center mt-2 mb-6 leading-relaxed max-w-xs">
           신호등이 <b className="text-[#4ade80]">초록</b>으로 바뀌는 순간 먼저 뽑는다.
           <br />
-          <b className="text-white">3발</b> 맞으면 쓰러진다. 신호 전에 뽑으면 부정출발.
+          <b className="text-white">3발</b> 맞으면 쓰러진다.
         </p>
+        {/* 파울 규칙 — 헷갈리기 쉬운 부분이라 메뉴에서 미리 알려준다 */}
+        <div
+          className="w-full max-w-xs rounded-xl px-3 py-2 mb-5 text-[11px] leading-relaxed"
+          style={{ background: 'rgba(20,8,12,0.55)', border: '1px solid rgba(251,191,36,0.35)' }}
+        >
+          <span className="font-black text-[#fbbf24]">⚠︎ 부정출발</span>
+          <span className="text-white/60">
+            {' '}
+            — 신호 전에 뽑으면 <b className="text-white/85">경고</b>. 라운드는 무효고 상대는 무피해.
+            <br />
+            경고 <b className="text-white/85">{MAX_FOULS}개</b>가 차면{' '}
+            <b className="text-[#fca5a5]">자기 발을 쏴서 1발</b> 잃는다.
+          </span>
+        </div>
 
         <div className="flex flex-col gap-2.5 w-full max-w-xs">
           <PickButton

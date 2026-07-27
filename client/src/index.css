@@ -344,6 +344,16 @@ body {
   animation: qd-clash 0.5s ease-out 0.22s both;
 }
 
+/* 부정출발: 총알이 발밑에 박히며 흙먼지가 인다 */
+@keyframes qd-dust {
+  0% { transform: translateX(-50%) scale(0.15); opacity: 0; }
+  16% { transform: translateX(-50%) scale(0.9); opacity: 1; }
+  100% { transform: translateX(-50%) scale(1.9) translateY(-18%); opacity: 0; }
+}
+.animate-qd-dust {
+  animation: qd-dust 0.72s ease-out both;
+}
+
 /* 피격 섬광 */
 @keyframes qd-impact {
   0% { transform: scale(0.2); opacity: 0; }
@@ -417,6 +427,7 @@ body {
   .animate-gs-hatoff,
   .animate-qd-slam,
   .animate-qd-impact,
+  .animate-qd-dust,
   .animate-qd-clash,
   .animate-gs-muzzle,
   .animate-gs-recoil,

@@ -21,6 +21,8 @@ export interface Fighter {
   outfit: Outfit
   hp: number
   ms: Ms
+  /** 쌓인 부정출발 경고 (이름표에 ⚠ 로 표시) */
+  fouls: number
   /** 이름표 아래에 뭘 보여줄지 — hp=탄약 / rounds=라운드 점 / none=없음 */
   meter: 'hp' | 'rounds' | 'none'
 }
@@ -29,12 +31,18 @@ interface ArenaProps {
   phase: ArenaPhase
   round: number
   maxHp: number
+  /** 경고 한도 (이름표에 이 개수만큼 칸을 그린다). 0 이면 경고 표시 안 함 */
+  maxFouls: number
   totalRounds: number
   left: Fighter
   right: Fighter
-  /** 결과에서 총을 쏜 쪽 — 뷰 기준(1=왼쪽 · 2=오른쪽 · 0=아무도) */
+  /** 결과에서 상대를 쏜 쪽 — 뷰 기준(1=왼쪽 · 2=오른쪽 · 0=아무도) */
   winner: 0 | 1 | 2
   tie: boolean
+  /** 부정출발한 쪽 — 뷰 기준. 0 이 아니면 파울 라운드 */
+  foulSide: 0 | 1 | 2
+  /** 경고가 차서 자기 발을 쏜 라운드인가 */
+  selfShot: boolean
   /** 이번 라운드로 승부가 끝났는가 (K.O. 문구) */
   ko: boolean
   /** 온라인: 내 기록은 나왔고 상대를 기다리는 중 */
@@ -78,11 +86,14 @@ export default function Arena({
   phase,
   round,
   maxHp,
+  maxFouls,
   totalRounds,
   left,
   right,
   winner,
   tie,
+  foulSide,
+  selfShot,
   ko,
   pending,
   hint,
@@ -92,13 +103,16 @@ export default function Arena({
   children,
 }: ArenaProps) {
   const green = phase === 'signal'
-  // 총이 발사된 라운드에만 화면을 흔든다 (총성 도착 타이밍에 맞춰 CSS 딜레이)
-  const firing = phase === 'result' && !pending && (tie || winner !== 0)
+  const settled = phase === 'result' && !pending
+  // 상대를 향해 총알이 날아가는 라운드 (파울 라운드는 상대에게 안 간다)
+  const firing = settled && foulSide === 0 && (tie || winner !== 0)
+  // 파울 라운드 — 총알은 자기 발밑으로 (경고면 땅, 경고 소진이면 자기 발)
+  const foulShot = settled && foulSide !== 0
 
   return (
     <div
       key={`arena-${fxKey}`}
-      className={`relative flex-1 w-full overflow-hidden ${firing ? 'animate-qd-shake' : ''}`}
+      className={`relative flex-1 w-full overflow-hidden ${firing || foulShot ? 'animate-qd-shake' : ''}`}
       style={{ ['--gs-h' as string]: 'clamp(112px, 25vh, 208px)' }}
     >
       {/* ── 하늘 ── */}
@@ -209,10 +223,10 @@ export default function Arena({
 
       {/* ── 이름표 + 체력 ── */}
       <div className="absolute" style={{ top: 50, left: 12 }}>
-        <Plate f={left} maxHp={maxHp} totalRounds={totalRounds} round={round} align="left" />
+        <Plate f={left} maxHp={maxHp} maxFouls={maxFouls} totalRounds={totalRounds} round={round} align="left" />
       </div>
       <div className="absolute" style={{ top: 50, right: 12 }}>
-        <Plate f={right} maxHp={maxHp} totalRounds={totalRounds} round={round} align="right" />
+        <Plate f={right} maxHp={maxHp} maxFouls={maxFouls} totalRounds={totalRounds} round={round} align="right" />
       </div>
 
       {/* ── 총잡이 두 명 ── */}
@@ -247,6 +261,35 @@ export default function Arena({
         </div>
       )}
 
+      {/* ── 파울: 총알이 자기 발밑으로 (상대에게 가지 않는다) ── */}
+      {foulShot && (
+        <div
+          className="absolute pointer-events-none"
+          style={{
+            [foulSide === 1 ? 'left' : 'right']: '17%',
+            bottom: '28%',
+            transform: `translateX(${foulSide === 1 ? '-50%' : '50%'})`,
+          }}
+        >
+          {/* 발밑 흙먼지 — 경고 소진(자기 발)이면 더 붉고 크게 */}
+          <div
+            className="absolute animate-qd-dust"
+            style={{
+              left: '50%',
+              bottom: 0,
+              width: selfShot ? 'calc(var(--gs-h) * 0.62)' : 'calc(var(--gs-h) * 0.44)',
+              aspectRatio: '1',
+              transform: 'translateX(-50%)',
+              borderRadius: 999,
+              animationDelay: `${BULLET_MS}ms`,
+              background: selfShot
+                ? 'radial-gradient(circle, #fff 0%, #ffd0a0 22%, rgba(239,68,68,0.8) 48%, rgba(120,53,15,0) 72%)'
+                : 'radial-gradient(circle, #ffe9c2 0%, rgba(214,150,90,0.7) 34%, rgba(120,80,40,0) 70%)',
+            }}
+          />
+        </div>
+      )}
+
       {/* 피격 섬광 — 총알이 닿는 순간 맞은 쪽에서 터진다 */}
       {firing && !tie && (
         <div
@@ -270,6 +313,9 @@ export default function Arena({
         phase={phase}
         winner={winner}
         tie={tie}
+        foulSide={foulSide}
+        selfShot={selfShot}
+        maxFouls={maxFouls}
         ko={ko}
         pending={pending}
         left={left}
@@ -381,12 +427,14 @@ function SignalLamp({ phase, round }: { phase: ArenaPhase; round: number }) {
 function Plate({
   f,
   maxHp,
+  maxFouls,
   totalRounds,
   round,
   align,
 }: {
   f: Fighter
   maxHp: number
+  maxFouls: number
   totalRounds: number
   round: number
   align: 'left' | 'right'
@@ -405,6 +453,14 @@ function Plate({
         >
           {f.name}
         </span>
+        {/* 부정출발 경고 — 차면 자기 발을 쏜다 */}
+        {maxFouls > 0 && (
+          <span className="flex gap-0.5 items-center">
+            {Array.from({ length: maxFouls }).map((_, i) => (
+              <Warn key={i} lit={i < f.fouls} />
+            ))}
+          </span>
+        )}
       </div>
 
       {f.meter === 'hp' && (
@@ -429,6 +485,23 @@ function Plate({
         </div>
       )}
     </div>
+  )
+}
+
+/** 경고 한 칸 — 부정출발 누적 표시 (작은 삼각형) */
+function Warn({ lit }: { lit: boolean }) {
+  return (
+    <span
+      className="block"
+      style={{
+        width: 0,
+        height: 0,
+        borderLeft: '4.5px solid transparent',
+        borderRight: '4.5px solid transparent',
+        borderBottom: `8px solid ${lit ? '#fbbf24' : 'rgba(255,255,255,0.2)'}`,
+        filter: lit ? 'drop-shadow(0 0 4px rgba(251,191,36,0.9))' : undefined,
+      }}
+    />
   )
 }
 
@@ -507,6 +580,9 @@ function Headline({
   phase,
   winner,
   tie,
+  foulSide,
+  selfShot,
+  maxFouls,
   ko,
   pending,
   left,
@@ -518,6 +594,9 @@ function Headline({
   phase: ArenaPhase
   winner: 0 | 1 | 2
   tie: boolean
+  foulSide: 0 | 1 | 2
+  selfShot: boolean
+  maxFouls: number
   ko: boolean
   pending: boolean
   left: Fighter
@@ -580,6 +659,43 @@ function Headline({
     )
   }
 
+  // ── 부정출발 ──
+  if (foulSide !== 0) {
+    const who = foulSide === 1 ? left : right
+    const big = selfShot ? '자기 발을 쐈다!' : 'FOUL!'
+    const color = selfShot ? '#fca5a5' : '#fbbf24'
+    return (
+      <div key="f" className={wrap} style={{ top: '24%' }}>
+        <div
+          className="font-black animate-qd-slam"
+          style={{
+            fontSize: selfShot ? 'clamp(28px, 8.5vw, 60px)' : 'clamp(40px, 12vw, 84px)',
+            lineHeight: 0.95,
+            color,
+            animationDelay: `${BULLET_MS}ms`,
+            textShadow: `0 0 30px ${color}aa, 0 4px 0 rgba(0,0,0,0.55)`,
+          }}
+        >
+          {big}
+        </div>
+        <div
+          className="mt-1.5 text-sm font-bold animate-qd-slam"
+          style={{ color: 'rgba(255,232,205,0.9)', animationDelay: `${BULLET_MS + 90}ms` }}
+        >
+          {selfShot
+            ? `${who.name} — 경고 ${maxFouls}/${maxFouls} · 1발 잃는다`
+            : `${who.name} — 신호 전에 뽑았다 · 경고 ${who.fouls}/${maxFouls}`}
+        </div>
+        <div
+          className="mt-1 label-mono animate-qd-slam"
+          style={{ color: 'rgba(255,220,190,0.6)', animationDelay: `${BULLET_MS + 150}ms` }}
+        >
+          {selfShot ? '경고 리셋' : '라운드 무효 · 상대 무피해'}
+        </div>
+      </div>
+    )
+  }
+
   if (override) {
     return (
       <div key="o" className={wrap} style={{ top: '25%' }}>
@@ -634,9 +750,8 @@ function Headline({
 
   if (winner === 0) return null
 
+  // 정상 승부 — 부정출발은 위에서 이미 처리했다
   const shooter = winner === 1 ? left : right
-  const target = winner === 1 ? right : left
-  const foul = target.ms === -1 // 상대가 성급해서 진 라운드
 
   return (
     <div key="r" className={wrap} style={{ top: '24%' }}>
@@ -650,13 +765,13 @@ function Headline({
           textShadow: `0 0 30px ${shooter.outfit.scarf}, 0 4px 0 rgba(0,0,0,0.5)`,
         }}
       >
-        {ko ? 'K.O.' : foul ? 'FOUL!' : 'HIT!'}
+        {ko ? 'K.O.' : 'HIT!'}
       </div>
       <div
         className="mt-1.5 text-sm font-bold animate-qd-slam"
         style={{ color: 'rgba(255,232,205,0.88)', animationDelay: `${BULLET_MS + 90}ms` }}
       >
-        {foul ? `${target.name} — 신호 전에 뽑았다` : `${shooter.name} — 먼저 뽑았다`}
+        {shooter.name} — 먼저 뽑았다
       </div>
     </div>
   )

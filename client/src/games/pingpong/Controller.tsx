@@ -99,9 +99,13 @@ export default function Controller({ initialCode }: ControllerProps) {
       setError('게임 화면 연결이 끊겼어요. 노트북에서 다시 시작하거나 코드를 확인하세요.')
     }
     // 내 플레이어가 실제로 공을 맞춘 순간 → 안드로이드만 진동 (아이폰은 미지원이라 무동작)
+    //  kind: 'smash'=강한 임팩트 · 'foul'=부정출발 경고(짜증나는 3연타) · 그 외=기본
     const onHit = (d?: { player?: number; kind?: string }) => {
       if ((d?.player ?? 1) !== playerRef.current) return
-      if (canVibrate) navigator.vibrate(d?.kind === 'smash' ? [0, 60, 40, 120] : 35)
+      if (!canVibrate) return
+      if (d?.kind === 'smash') navigator.vibrate([0, 60, 40, 120])
+      else if (d?.kind === 'foul') navigator.vibrate([0, 90, 60, 90, 60, 90])
+      else navigator.vibrate(35)
     }
     // 노트북이 게임 종류를 알려줌 → 폰 UI 적응 (idle=게임 선택 대기)
     const onGame = (d?: { game?: string }) => {
