@@ -10,6 +10,15 @@ import basicSsl from '@vitejs/plugin-basic-ssl'
 //   (DeviceMotion 센서는 https(보안 컨텍스트)에서만 동작하므로 로컬도 https 로 띄운다.)
 export default defineConfig({
   plugins: [react(), tailwindcss(), basicSsl()],
+  build: {
+    rollupOptions: {
+      output: {
+        // three 는 게임 코드보다 훨씬 크고 거의 안 바뀐다 → 별도 청크로 빼면
+        // 게임을 고쳐도 폰이 three 를 다시 안 받는다 (핫스팟/셀룰러에서 체감 큼).
+        manualChunks: { three: ['three'] },
+      },
+    },
+  },
   server: {
     // 0.0.0.0 로 바인딩 → 같은 와이파이의 폰에서 노트북 IP로 직접 접속 가능.
     // (ngrok 을 쓰면 인터넷 어디서든 접속 가능하지만, 같은 공유기라면 이 방법이 더 빠름)
