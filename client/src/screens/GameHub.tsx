@@ -19,7 +19,7 @@ const CARDS: GameCard[] = [
   {
     id: 'pingpong',
     title: '핑퐁 스매시',
-    desc: '날아오는 공을 타이밍 맞춰 받아치기. 스매시!',
+    desc: '3D 코트에서 날아오는 공을 타이밍 맞춰 받아치기. 정확한 순간에 스매시!',
     emoji: '🏓',
     gradient: 'linear-gradient(160deg, #2b8fe0, #1c86cf 55%, #12639e)',
     playable: true,

@@ -10,37 +10,47 @@ import { useSwing } from './useSwing'
 import OnlineLobby from './OnlineLobby'
 import { socket } from '../../net/socket'
 import { feedbackShake, feedbackThrow, unlockAudio } from '../../lib/feedback'
+import { createScene, type FrameState, type PingPongScene } from './scene3d'
+import {
+  GOOD_D,
+  IDEAL1,
+  IDEAL2,
+  MISS1,
+  MISS2,
+  NORMAL_SPEED,
+  PERFECT_D,
+  SMASH_SPEED,
+  W1_HI,
+  W1_LO,
+  W2_HI,
+  W2_LO,
+  WEAK_SPEED,
+  WIN_SCORE as WIN,
+} from './court'
 
 /**
- * PingPong — 타이밍 스매시 탁구
+ * PingPong — 타이밍 스매시 탁구 (3D)
  * -------------------------------------------------------------
  * 모드:
- *  - solo: 나(P1) vs 봇(P2). 봇은 "라켓 쥔 사람"이 공에 맞춰 스윙하는 모션.
- *  - duo : 로컬 2인. 화면을 위/아래로 반 나눠 각자 시점(자기 라켓이 아래쪽)으로 보여줌.
+ *  - solo: 나(P1) vs 봇(P2). 봇은 공에 맞춰 스윙한다.
+ *  - duo : 로컬 2인. 화면을 좌우로 반 나눠 각자 1인칭 시점으로 보여줌.
+ *  - online-host / online-guest: 호스트가 시뮬을 돌리고 상태를 중계.
  *
- * 입력(공통): 화면 탭 / 스페이스(P1)·엔터(P2) / 휴대폰 왕복 스윙(폰 컨트롤러).
+ * 입력(공통): 화면 탭 / 스페이스(P1)·P(P2) / 휴대폰 왕복 스윙(폰 컨트롤러).
  * 정확한 타이밍(노란 링)에 치면 스매시.
+ *
+ * ── 구조 ──
+ *  이 파일 = 규칙·입력·네트워크·UI.   court.ts = 코트 규격·공 궤적(순수).
+ *  scene3d.ts = Three.js 무대(규칙을 모름).
+ *  깊이는 여전히 pos(0=P2끝 … 1=P1끝) 하나로 다루고, 3D 좌표와 공의 높이는
+ *  court.ts 가 pos 에서 계산한다 → 온라인 프로토콜을 그대로 유지할 수 있다.
  */
 
-const WIN = 11
-// 타이밍 (pos: 0=위(P2쪽), 1=아래(P1쪽))
-const IDEAL1 = 0.9
-const W1_LO = 0.72
-const W1_HI = 1.06
-const MISS1 = 1.1
-const IDEAL2 = 0.1
-const W2_LO = -0.06
-const W2_HI = 0.28
-const MISS2 = -0.1
-const PERFECT_D = 0.06
-const GOOD_D = 0.16
-// 속도 (pos/sec)
-const NORMAL_SPEED = 1.0
-const SMASH_SPEED = 1.95
-const WEAK_SPEED = 0.82
 const BASE_MISS = 0.12
 const SMASH_MISS = 0.62
 const POINT_COUNTDOWN_MS = 2600 // 득점 후: 플래시 → 3·2·1 → 서브 (준비 시간)
+const SWING_MS = 260 // 라켓 스윙 연출 길이
+const SHAKE_MS = 190 // 스매시 화면 흔들림 길이
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
@@ -151,9 +161,15 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
   const startOnlineRef = useRef<(role: 'host' | 'guest') => void>(() => {})
   const labelTimer = useRef<number | null>(null)
 
+  const sceneRef = useRef<PingPongScene | null>(null)
   const [ui, setUi] = useState({ phase: 'ready' as Phase, s1: 0, s2: 0, mode: 'solo' as Mode })
   const [label, setLabel] = useState<{ text: string; kind: LabelKind } | null>(null)
   const [motionOn, setMotionOn] = useState(false)
+  // 득점 후 3·2·1 (3D 캔버스 위에 DOM 으로 얹는다 — 텍스트가 훨씬 선명하다)
+  const [countdown, setCountdown] = useState(0)
+  // 스매시 순간 화면 전체 섬광 (id 가 바뀌면 CSS 애니메이션 재생)
+  const [flashId, setFlashId] = useState(0)
+  const [glFailed, setGlFailed] = useState(false)
   const [lobbyOpen, setLobbyOpen] = useState(false)
   const [online, setOnline] = useState<{ role: 'host' | 'guest' } | null>(null)
   const [oppLeft, setOppLeft] = useState(false)
@@ -187,8 +203,16 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
     const canvas = canvasRef.current
     const container = containerRef.current
     if (!canvas || !container) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    let scene: PingPongScene
+    try {
+      scene = createScene(canvas)
+    } catch (err) {
+      // WebGL 을 못 쓰는 환경 — 게임을 죽이지 말고 안내만 띄운다
+      console.error('[pingpong] WebGL 초기화 실패', err)
+      setGlFailed(true)
+      return
+    }
+    sceneRef.current = scene
 
     const commit = () => setUi({ phase: g.phase, s1: g.s1, s2: g.s2, mode: g.mode })
     const showLabel = (text: string, kind: LabelKind) => {
@@ -387,184 +411,24 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
       }
     }
 
-    // ── 한 시점(viewer=1 아래/P1, 2 위/P2)으로 테이블+공+선수 그리기 ──
-    const drawScene = (
-      rx: number,
-      ry: number,
-      rw: number,
-      rh: number,
-      viewer: number,
-      now: number,
-    ) => {
-      const topY = ry + rh * 0.1
-      const botY = ry + rh * 0.95
-      const halfTop = rw * 0.17
-      const halfBot = rw * 0.42
-      const cx = rx + rw / 2
-      const P = (depth: number, xn: number) => ({
-        x: cx + (xn - 0.5) * 2 * lerp(halfTop, halfBot, clamp(depth, 0, 1)),
-        y: lerp(topY, botY, depth),
-      })
+    /** 게임 상태 → 렌더러가 이해하는 프레임 (렌더러는 규칙을 모른다) */
+    const frameState = (now: number): FrameState => {
       const b = g.ball
-      // 이 시점 기준 깊이/좌우 (viewer2 는 상하·좌우 반전)
-      const dv = viewer === 1 ? b.pos : 1 - b.pos
-      const xv = (x: number) => (viewer === 1 ? x : 1 - x)
-      const nearX = viewer === 1 ? g.p1X : g.p2X
-      const farX = viewer === 1 ? g.p2X : g.p1X
-      const nearColor = viewer === 1 ? '#2b8fe0' : '#e2513c'
-      const farColor = viewer === 1 ? '#e2513c' : '#2b8fe0'
-      const nearSwingAt = viewer === 1 ? g.p1SwingAt : g.p2SwingAt
-      const farSwingAt = viewer === 1 ? g.p2SwingAt : g.p1SwingAt
-      const receiving = (viewer === 1 && b.dir > 0) || (viewer === 2 && b.dir < 0)
-
-      // 테이블
-      const tl = P(0, 0)
-      const tr = P(0, 1)
-      const br = P(1, 1)
-      const bl = P(1, 0)
-      ctx.beginPath()
-      ctx.moveTo(tl.x, tl.y)
-      ctx.lineTo(tr.x, tr.y)
-      ctx.lineTo(br.x, br.y)
-      ctx.lineTo(bl.x, bl.y)
-      ctx.closePath()
-      const tg = ctx.createLinearGradient(0, topY, 0, botY)
-      tg.addColorStop(0, '#12639e')
-      tg.addColorStop(1, '#1c86cf')
-      ctx.fillStyle = tg
-      ctx.shadowColor = 'rgba(0,0,0,0.45)'
-      ctx.shadowBlur = 24
-      ctx.shadowOffsetY = 10
-      ctx.fill()
-      ctx.shadowColor = 'transparent'
-      ctx.shadowBlur = 0
-      ctx.shadowOffsetY = 0
-      ctx.strokeStyle = 'rgba(255,255,255,0.85)'
-      ctx.lineWidth = 2.5
-      ctx.stroke()
-      // 센터 라인 + 네트
-      const c0 = P(0, 0.5)
-      const c1 = P(1, 0.5)
-      ctx.beginPath()
-      ctx.moveTo(c0.x, c0.y)
-      ctx.lineTo(c1.x, c1.y)
-      ctx.strokeStyle = 'rgba(255,255,255,0.35)'
-      ctx.lineWidth = 1.5
-      ctx.stroke()
-      const nL = P(0.5, -0.05)
-      const nR = P(0.5, 1.05)
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)'
-      ctx.lineWidth = 3
-      ctx.beginPath()
-      ctx.moveTo(nL.x, nL.y)
-      ctx.lineTo(nR.x, nR.y)
-      ctx.stroke()
-      ctx.fillStyle = 'rgba(255,255,255,0.12)'
-      ctx.fillRect(nL.x, nL.y - 9, nR.x - nL.x, 9)
-
-      // 먼 쪽 선수 (사람 피겨) — 공이 다가오면 라켓 들고, 스윙 시각이면 휘두름
-      const farAntic =
-        !receiving && dv < 0.5 ? clamp(1 - dv / 0.45, 0, 1) : 0 // 공이 먼 선수에게 갈 때
-      const farP = P(0.02, xv(farX))
-      const farSwing = now - farSwingAt < 220 ? 1 - (now - farSwingAt) / 220 : 0
-      drawPerson(ctx, farP.x, farP.y, 1, farColor, farAntic, farSwing)
-
-      // 가까운 쪽 라켓 (크게)
-      const nearP = P(0.97, xv(nearX))
-      const nearSwing = now - nearSwingAt < 200 ? 1 - (now - nearSwingAt) / 200 : 0
-      drawPaddle(ctx, nearP.x, nearP.y, 1.35, nearColor, nearSwing)
-
-      // 공 + 그림자
-      const bp = P(dv, xv(b.x))
-      const r = lerp(6, 18, clamp(dv, 0, 1))
-      ctx.fillStyle = 'rgba(0,0,0,0.28)'
-      ctx.beginPath()
-      ctx.ellipse(bp.x, bp.y + r * 0.9, r * 1.1, r * 0.5, 0, 0, Math.PI * 2)
-      ctx.fill()
-      if (b.smash) {
-        ctx.fillStyle = 'rgba(255,90,60,0.22)'
-        for (let t = 1; t <= 3; t++) {
-          const back = dv - (viewer === 1 ? -1 : 1) * 0 // 잔상은 진행 반대
-          void back
-          const gp = P(clamp(dv + 0.05 * t * (b.dir > 0 ? (viewer === 1 ? -1 : 1) : viewer === 1 ? 1 : -1), 0, 1), xv(b.x))
-          ctx.beginPath()
-          ctx.arc(gp.x, gp.y, r * (1 - t * 0.18), 0, Math.PI * 2)
-          ctx.fill()
-        }
-      }
-      // 타이밍 링
-      if (receiving && !b.hit && dv > W1_LO - 0.12) {
-        const d = Math.abs(dv - IDEAL1)
-        const inWin = dv >= W1_LO && dv <= W1_HI
-        ctx.strokeStyle = d <= PERFECT_D ? '#ffd24a' : inWin ? '#49e08a' : 'rgba(255,255,255,0.35)'
-        ctx.lineWidth = d <= PERFECT_D ? 4 : 2.5
-        ctx.beginPath()
-        ctx.arc(bp.x, bp.y, r + 9, 0, Math.PI * 2)
-        ctx.stroke()
-      }
-      const ball = ctx.createRadialGradient(bp.x - r * 0.3, bp.y - r * 0.3, r * 0.2, bp.x, bp.y, r)
-      ball.addColorStop(0, '#ffffff')
-      ball.addColorStop(1, '#dfe6ec')
-      ctx.fillStyle = ball
-      ctx.beginPath()
-      ctx.arc(bp.x, bp.y, r, 0, Math.PI * 2)
-      ctx.fill()
-    }
-
-    const render = (now: number) => {
-      const { w, h } = g
-      if (w === 0 || h === 0) return
-      const bg = ctx.createLinearGradient(0, 0, 0, h)
-      bg.addColorStop(0, '#0f1622')
-      bg.addColorStop(1, '#0a0e16')
-      ctx.fillStyle = bg
-      ctx.fillRect(0, 0, w, h)
-
-      let ox = 0
-      let oy = 0
-      if (now - g.shakeAt < 160) {
-        const k = (1 - (now - g.shakeAt) / 160) * 7
-        ox = (Math.random() - 0.5) * k
-        oy = (Math.random() - 0.5) * k
-      }
-      ctx.save()
-      ctx.translate(ox, oy)
-      if (g.mode === 'duo') {
-        // 세로 분할: 왼쪽=P1 시점, 오른쪽=P2 시점 (각자 1인칭, 상대는 사람 피겨)
-        drawScene(0, 0, w / 2, h, 1, now)
-        drawScene(w / 2, 0, w / 2, h, 2, now)
-        ctx.strokeStyle = 'rgba(255,255,255,0.18)'
-        ctx.lineWidth = 2
-        ctx.beginPath()
-        ctx.moveTo(w / 2, 0)
-        ctx.lineTo(w / 2, h)
-        ctx.stroke()
-      } else if (g.mode === 'online-guest') {
-        drawScene(0, 0, w, h, 2, now) // 게스트=P2, 자기 시점(아래)
-      } else {
-        drawScene(0, 0, w, h, 1, now) // solo / online-host = P1 시점
-      }
-      ctx.restore()
-
-      // 득점 후 3·2·1 카운트다운
-      if (g.countdown > 0) {
-        ctx.save()
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.shadowColor = 'rgba(0,0,0,0.55)'
-        ctx.shadowBlur = 24
-        ctx.fillStyle = 'rgba(255,255,255,0.75)'
-        ctx.font = `600 ${Math.round(h * 0.035)}px system-ui, sans-serif`
-        ctx.fillText('다음 랠리 준비', w / 2, h / 2 - h * 0.11)
-        ctx.fillStyle = '#ffffff'
-        ctx.font = `900 ${Math.round(h * 0.18)}px system-ui, sans-serif`
-        ctx.fillText(String(g.countdown), w / 2, h / 2)
-        ctx.restore()
-      }
-
-      if (now - g.flashAt < 140) {
-        ctx.fillStyle = `rgba(255,120,80,${0.35 * (1 - (now - g.flashAt) / 140)})`
-        ctx.fillRect(0, 0, w, h)
+      const sw = (at: number) => (now - at < SWING_MS ? 1 - (now - at) / SWING_MS : 0)
+      return {
+        split: g.mode === 'duo',
+        viewer: g.mode === 'online-guest' ? 2 : 1,
+        playing: g.phase === 'playing',
+        ballPos: b.pos,
+        ballDir: b.dir,
+        ballX: b.x,
+        ballSmash: b.smash,
+        ballHit: b.hit,
+        p1X: g.p1X,
+        p2X: g.p2X,
+        p1Swing: sw(g.p1SwingAt),
+        p2Swing: sw(g.p2SwingAt),
+        shake: now - g.shakeAt < SHAKE_MS ? 1 - (now - g.shakeAt) / SHAKE_MS : 0,
       }
     }
 
@@ -573,11 +437,9 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
       const dpr = Math.min(2, window.devicePixelRatio || 1)
       g.w = rect.width
       g.h = rect.height
-      canvas.width = Math.round(rect.width * dpr)
-      canvas.height = Math.round(rect.height * dpr)
       canvas.style.width = `${rect.width}px`
       canvas.style.height = `${rect.height}px`
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      scene.resize(rect.width, rect.height, dpr)
     }
     const ro = new ResizeObserver(resize)
     ro.observe(container)
@@ -600,6 +462,20 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
       }
     }
 
+    // 캔버스 밖(DOM)으로 내보내는 값들 — 바뀔 때만 setState 해서 리렌더를 아낀다
+    let shownCountdown = -1
+    let shownFlashAt = -1
+    const syncOverlays = () => {
+      if (g.countdown !== shownCountdown) {
+        shownCountdown = g.countdown
+        setCountdown(g.countdown)
+      }
+      if (g.flashAt !== shownFlashAt) {
+        shownFlashAt = g.flashAt
+        setFlashId((n) => n + 1)
+      }
+    }
+
     let raf = 0
     let last = performance.now()
     const frame = () => {
@@ -614,22 +490,26 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
           const prog = b.dir > 0 ? clamp(b.pos, 0, 1) : clamp(1 - b.pos, 0, 1)
           b.x = lerp(b.x0, b.x1, prog)
         }
-        render(now)
       } else {
         update(now, dt)
-        render(now)
         if (g.mode === 'online-host' && now - g.lastBroadcast > 33) {
           g.lastBroadcast = now
           socket.emit('pp:state', serialize())
         }
       }
+      const fs = frameState(now)
+      scene.update(fs)
+      scene.render(fs)
       syncCombo()
+      syncOverlays()
       raf = requestAnimationFrame(frame)
     }
     raf = requestAnimationFrame(frame)
     return () => {
       cancelAnimationFrame(raf)
       ro.disconnect()
+      sceneRef.current = null
+      scene.dispose()
     }
   }, [])
 
@@ -775,13 +655,14 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
         <Score label={l2} value={ui.s2} color="#e2513c" />
       </div>
 
-      {/* 캔버스 스테이지 */}
-      <div ref={containerRef} onPointerDown={onTap} className="relative flex-1 cursor-pointer">
+      {/* 3D 스테이지 */}
+      <div ref={containerRef} onPointerDown={onTap} className="relative flex-1 cursor-pointer overflow-hidden">
         <canvas ref={canvasRef} className="block" />
 
-        {/* 2인 세로 분할 표시 (반반인지 한눈에) */}
+        {/* 2인 좌우 분할 — 가운데 경계선 + 각자 라벨 */}
         {ui.mode === 'duo' && ui.phase !== 'ready' && (
           <>
+            <div className="absolute inset-y-0 left-1/2 w-px bg-white/20 pointer-events-none" />
             <span className="absolute top-2 left-3 label-mono text-[#2b8fe0] pointer-events-none">
               ◀ P1
             </span>
@@ -789,6 +670,43 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
               P2 ▶
             </span>
           </>
+        )}
+
+        {/* 스매시 섬광 (id 가 바뀔 때마다 다시 재생) */}
+        {flashId > 0 && (
+          <div
+            key={flashId}
+            className="pointer-events-none absolute inset-0 animate-pp-flash"
+            style={{ background: 'radial-gradient(circle at 50% 55%, rgba(255,150,110,0.5), rgba(255,90,60,0) 70%)' }}
+          />
+        )}
+
+        {/* 득점 후 3·2·1 */}
+        {countdown > 0 && (
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+            <span className="text-sm font-semibold text-white/70 mb-1">다음 랠리 준비</span>
+            <span
+              key={countdown}
+              className="text-[14vh] leading-none font-black animate-combo-hit"
+              style={{ color: 'rgba(255,255,255,0.82)', textShadow: '0 6px 30px rgba(0,0,0,0.75)' }}
+            >
+              {countdown}
+            </span>
+          </div>
+        )}
+
+        {/* WebGL 을 못 쓰는 기기 안내 */}
+        {glFailed && (
+          <Overlay>
+            <div className="text-5xl mb-2">🧩</div>
+            <h2 className="text-xl font-black mb-1">3D를 띄울 수 없어요</h2>
+            <p className="text-white/60 mb-6 text-sm text-center leading-relaxed">
+              이 브라우저에서 WebGL 이 꺼져 있거나 지원되지 않습니다.
+              <br />
+              다른 브라우저(크롬/사파리 최신)로 열어보세요.
+            </p>
+            <PrimaryButton onClick={onExit}>게임 선택으로</PrimaryButton>
+          </Overlay>
         )}
 
         {label && (
@@ -894,81 +812,6 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
   )
 }
 
-/** 라켓 (크게). swing 0~1 이면 휘두르는 연출 */
-function drawPaddle(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  scale: number,
-  color: string,
-  swing: number,
-) {
-  ctx.save()
-  ctx.translate(x, y)
-  ctx.rotate((-0.4 + swing * 0.9) * 0.6)
-  ctx.scale(scale * (1 + swing * 0.2), scale * (1 + swing * 0.2))
-  ctx.fillStyle = color
-  ctx.beginPath()
-  ctx.ellipse(0, 0, 20, 24, 0, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.strokeStyle = 'rgba(255,255,255,0.9)'
-  ctx.lineWidth = 2.5
-  ctx.stroke()
-  // 손잡이
-  ctx.fillStyle = '#2b2620'
-  ctx.fillRect(-4, 20, 8, 16)
-  ctx.restore()
-}
-
-/** 라켓 쥔 사람 (먼 쪽 상대). raise=공 다가옴 반응, swing=휘두름 */
-function drawPerson(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  scale: number,
-  color: string,
-  raise: number,
-  swing: number,
-) {
-  ctx.save()
-  ctx.translate(x, y - 8 * scale)
-  ctx.scale(scale, scale)
-  // 몸통
-  ctx.fillStyle = '#3a4658'
-  ctx.beginPath()
-  ctx.roundRect(-13, 2, 26, 30, 10)
-  ctx.fill()
-  // 머리
-  ctx.fillStyle = '#e9c9a8'
-  ctx.beginPath()
-  ctx.arc(0, -8, 9, 0, Math.PI * 2)
-  ctx.fill()
-  // 팔 + 라켓 (준비→들기→스윙)
-  const armAngle = -0.5 - raise * 0.6 - swing * 1.3
-  ctx.save()
-  ctx.translate(10, 6)
-  ctx.rotate(armAngle)
-  ctx.strokeStyle = '#e9c9a8'
-  ctx.lineWidth = 5
-  ctx.lineCap = 'round'
-  ctx.beginPath()
-  ctx.moveTo(0, 0)
-  ctx.lineTo(16, 0)
-  ctx.stroke()
-  // 라켓 헤드
-  ctx.translate(20, 0)
-  ctx.fillStyle = color
-  ctx.beginPath()
-  ctx.ellipse(0, 0, 11, 13, 0, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.strokeStyle = 'rgba(255,255,255,0.85)'
-  ctx.lineWidth = 2
-  ctx.stroke()
-  ctx.restore()
-  ctx.restore()
-}
-
-/** 랠리 콤보 임팩트. 콤보가 오를수록 커지고 색이 뜨거워진다(화이트→라임→골드→코랄). */
 function ComboBadge({ count }: { count: number }) {
   const tier =
     count >= 8
