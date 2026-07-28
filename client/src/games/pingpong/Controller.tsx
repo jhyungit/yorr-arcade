@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { socket } from '../../net/socket'
+import { answerLatencyPing } from '../../net/latency'
 import { useSwing } from './useSwing'
 import { canVibrate } from '../../lib/feedback'
 
@@ -156,6 +157,12 @@ export default function Controller({ initialCode }: ControllerProps) {
     }
     // eslint 규칙 없음: 최초 1회만 실행
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 노트북이 재는 입력 지연에 응답만 해준다 (연결돼 있는 동안 계속)
+  useEffect(() => {
+    if (!joined) return
+    return answerLatencyPing()
+  }, [joined])
 
   const enableMotion = async () => {
     await requestPermission()

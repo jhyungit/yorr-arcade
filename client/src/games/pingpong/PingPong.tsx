@@ -9,6 +9,7 @@ import {
 import { useSwing } from './useSwing'
 import OnlineLobby from './OnlineLobby'
 import { socket } from '../../net/socket'
+import { startLatencyProbe, type LatencyStat } from '../../net/latency'
 import { feedbackShake, feedbackThrow, unlockAudio } from '../../lib/feedback'
 import { createScene, type FrameState, type PingPongScene } from './scene3d'
 import {
@@ -239,6 +240,13 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
   const [online, setOnline] = useState<{ role: 'host' | 'guest' } | null>(null)
   const [oppLeft, setOppLeft] = useState(false)
   const [combo, setCombo] = useState<{ count: number; id: number } | null>(null)
+  // 폰 입력 지연 — 아직 '측정만' 한다. 보정 적용 여부는 실측값 보고 정한다.
+  const [lat, setLat] = useState<LatencyStat | null>(null)
+
+  useEffect(() => {
+    if (!phoneConnected) return setLat(null)
+    return startLatencyProbe(setLat)
+  }, [phoneConnected])
 
   // 모든 입력의 단일 진입점.
   // - online-guest: 로컬 시뮬 대신 서버로 스윙 전송
@@ -783,7 +791,16 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
               온라인 · {online.role === 'host' ? '내가 방장' : '참가'}
             </span>
           ) : phoneConnected ? (
-            <span className="text-xs text-[#49e08a]">📱 폰 연결됨 🟢</span>
+            <span className="text-xs text-[#49e08a]">
+              📱 폰 연결됨 🟢
+              {lat?.oneWayMs != null && (
+                // 편도 지연 (흔들림). 25ms 넘으면 판정 보정을 넣을 값어치가 있다.
+                <span className={lat.oneWayMs > 25 ? 'ml-2 text-[#ffd24a]' : 'ml-2 text-white/45'}>
+                  {Math.round(lat.oneWayMs)}ms
+                  {lat.jitterMs != null && ` (±${Math.round(lat.jitterMs / 2)})`}
+                </span>
+              )}
+            </span>
           ) : ui.mode === 'solo' && ui.phase !== 'ready' ? (
             <span className="label-mono text-white/40">1인 · {DIFF_LABEL[ui.diff]}</span>
           ) : (
