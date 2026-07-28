@@ -19,6 +19,28 @@
   --coral: #e0483a;
   --coral-lo: #c23a2d;
   --pos: #12907f;
+
+  /* ── 폰트 ──
+     외부 폰트를 안 받는다(CLAUDE.md). 핫스팟에서 데이터 0으로 돌아가는 게
+     전제라 CDN 웹폰트는 애초에 로딩이 안 되기도 한다.
+     대신 "이미 깔려 있는 것 중 나은 것"을 앞에 세운다. 폰트 폴백은 글자
+     단위로 동작하므로, 라틴/숫자는 둥근 폰트가 받고 한글은 뒤로 흘러간다.
+
+     본문: Malgun Gothic(딱딱함)보다 Noto Sans KR·Apple SD Gothic Neo 를 먼저. */
+  --font-ui: 'Apple SD Gothic Neo', Pretendard, 'Pretendard Variable', 'Noto Sans KR',
+    'Malgun Gothic', system-ui, -apple-system, sans-serif;
+
+  /* 디스플레이(콜아웃·큰 점수·게임 제목): 굵고 성격 있는 것.
+     Arial Rounded MT Bold 를 맨 앞에 둬서 숫자·영문이 둥글게 나오고,
+     한글은 HYHeadLine(포스터체) → Noto Sans KR Black 으로 받는다. */
+  --font-display: 'Arial Rounded MT Bold', 'HYHeadLine-Medium', 'HYGothic-Extra',
+    'Noto Sans KR Black', 'Noto Sans KR', 'Apple SD Gothic Neo', var(--font-ui);
+}
+
+/** 큰 글자에 붙인다 — 게임다운 성격을 주는 표시용 폰트 */
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
 }
 
 html,
@@ -44,8 +66,7 @@ body {
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
-  font-family: Pretendard, 'Pretendard Variable', system-ui, -apple-system, 'Malgun Gothic',
-    'Apple SD Gothic Neo', sans-serif;
+  font-family: var(--font-ui);
 }
 
 .label-mono {
@@ -262,6 +283,80 @@ body {
 .yd-row[data-state='sel'] .yd-row-value { color: var(--gold-2); }
 /* 0점이 될 칸은 눈에 덜 띄게 (버리는 칸인지 한눈에) */
 .yd-row.is-zero .yd-row-value { opacity: 0.42; }
+
+/* ── 족보 콜아웃 ──
+   주사위가 멈췄을 때 "요트!!!" 를 임팩트 있게. 급이 셋이다:
+     big  요트          — 가장 크게 들어와 흔들린다
+     mid  라지스트레이트·포카드·풀하우스
+     low  스몰스트레이트 — 가볍게 스쳐 지나간다 */
+@keyframes yd-callout {
+  0% { transform: scale(2.4) rotate(-6deg); opacity: 0; }
+  16% { transform: scale(0.92) rotate(2deg); opacity: 1; }
+  26% { transform: scale(1.06) rotate(-1deg); }
+  36% { transform: scale(1) rotate(0deg); }
+  76% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1.14) translateY(-14px); opacity: 0; }
+}
+@keyframes yd-callout-low {
+  0% { transform: translateY(18px) scale(0.9); opacity: 0; }
+  22% { transform: translateY(0) scale(1); opacity: 1; }
+  74% { opacity: 1; }
+  100% { transform: translateY(-16px) scale(1.02); opacity: 0; }
+}
+/* 뒤에서 터지는 빛 */
+@keyframes yd-callout-burst {
+  0% { transform: scale(0.2); opacity: 0; }
+  18% { opacity: 0.9; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+/* 요트만 — 글자가 부르르 떨린다 */
+@keyframes yd-callout-shake {
+  0%, 100% { translate: 0 0; }
+  20% { translate: -4px 2px; }
+  40% { translate: 4px -2px; }
+  60% { translate: -3px -1px; }
+  80% { translate: 2px 1px; }
+}
+
+.yd-callout {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.yd-callout-burst {
+  position: absolute;
+  width: 46vmin;
+  height: 46vmin;
+  border-radius: 50%;
+  filter: blur(6px);
+  animation: yd-callout-burst 0.9s ease-out both;
+}
+.yd-callout-text {
+  font-family: var(--font-display);
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  text-shadow: 0 6px 30px rgba(0, 0, 0, 0.75);
+}
+.yd-callout[data-tier='big'] .yd-callout-text {
+  font-size: clamp(44px, 13vw, 132px);
+  animation: yd-callout 1.5s cubic-bezier(0.2, 0.85, 0.25, 1) both,
+    yd-callout-shake 0.34s ease-in-out 0.16s 2;
+}
+.yd-callout[data-tier='mid'] .yd-callout-text {
+  font-size: clamp(32px, 8.5vw, 84px);
+  animation: yd-callout 1.3s cubic-bezier(0.2, 0.85, 0.25, 1) both;
+}
+.yd-callout[data-tier='low'] .yd-callout-text {
+  font-size: clamp(24px, 6vw, 58px);
+  animation: yd-callout-low 1.1s cubic-bezier(0.25, 0.9, 0.3, 1) both;
+}
 
 @keyframes yd-flash {
   0% { background: rgba(216, 162, 74, 0.5); }
@@ -823,6 +918,14 @@ body {
   .ar-stage,
   .arcade {
     transition: none;
+  }
+  /* 콜아웃은 "무슨 족보가 떴는지" 알려주는 정보라 끄지 않고 최소화만 한다 */
+  .yd-callout-burst,
+  .yd-callout[data-tier='big'] .yd-callout-text,
+  .yd-callout[data-tier='mid'] .yd-callout-text,
+  .yd-callout[data-tier='low'] .yd-callout-text {
+    animation-duration: 0.9s;
+    animation-name: yd-callout-low;
   }
   .animate-reaction,
   .yd-flash,

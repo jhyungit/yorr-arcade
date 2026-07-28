@@ -99,7 +99,7 @@ export default function GameHub({
       <header className="relative z-10 flex shrink-0 items-center justify-between px-5 py-3 sm:px-8">
         <div>
           <div className="label-mono text-white/40">YORR · ARCADE</div>
-          <div className="text-sm font-black tracking-tight text-white/85">게임을 고르세요</div>
+          <div className="font-display text-sm font-black text-white/85">게임을 고르세요</div>
         </div>
         <button
           onClick={() => setPanel(true)}
@@ -143,7 +143,7 @@ export default function GameHub({
             <div className="flex items-end gap-3">
               <span className="text-[34px] leading-none drop-shadow-lg sm:text-[42px]">{card.emoji}</span>
               <div className="min-w-0">
-                <h1 className="truncate text-xl font-black tracking-tight sm:text-2xl">{card.title}</h1>
+                <h1 className="font-display truncate text-xl font-black sm:text-2xl">{card.title}</h1>
                 <p className="mt-0.5 truncate text-[12px] text-white/60 sm:text-[13px]">{card.desc}</p>
               </div>
             </div>
@@ -246,7 +246,7 @@ export default function GameHub({
           </div>
           <button
             onClick={() => onSelect(card.id)}
-            className="ar-play rounded-xl px-10 py-3 text-[15px] font-black tracking-tight"
+            className="ar-play font-display rounded-xl px-10 py-3 text-[15px] font-black"
           >
             ▶ 플레이
           </button>

@@ -141,6 +141,28 @@ export function totalScore(sheet: ScoreSheet): number {
 }
 
 /** 12칸을 모두 채웠는지 (게임 종료 여부) */
+/* ── 콜아웃용 족보 감지 ──
+   주사위가 멈췄을 때 "요트!!!" 같은 안내를 띄우기 위한 판정.
+   센 것부터 보고 하나만 고른다 (요트는 포카드·풀하우스도 동시에 만족하므로).
+   이미 기록한 칸은 건너뛴다 — 못 쓰는 족보를 알려주면 김만 샌다.
+   판정은 scoreFor 를 그대로 재사용한다 (미성립이면 0 을 돌려주므로). */
+const CALLOUT_ORDER: CategoryId[] = [
+  'yacht',
+  'largeStraight',
+  'fourKind',
+  'fullHouse',
+  'smallStraight',
+]
+
+/** 지금 주사위에서 성립하고, 아직 기록 안 한 칸 중 가장 센 족보 (없으면 null) */
+export function calloutHand(values: number[], sheet: ScoreSheet): CategoryId | null {
+  for (const id of CALLOUT_ORDER) {
+    if (sheet[id] !== null) continue
+    if (scoreFor(id, values) > 0) return id
+  }
+  return null
+}
+
 export function isGameOver(sheet: ScoreSheet): boolean {
   return CATEGORIES.every((c) => sheet[c.id] !== null)
 }
