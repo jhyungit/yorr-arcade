@@ -26,3 +26,6 @@ npm-debug.log*
 # Vite가 자동 생성하는 HTTPS 인증서 캐시
 client/.vite/
 **/.cert/
+
+# 마스코트 디자인
+mascot-preview.jsx
