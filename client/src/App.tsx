@@ -5,24 +5,29 @@ import Controller from './games/pingpong/Controller'
 import RhythmTap from './games/rhythm/RhythmTap'
 import ReactionBattle from './games/reaction/ReactionBattle'
 import StackSlasher from './games/slasher/StackSlasher'
+import YachtDice from './games/yacht/YachtDice'
+import PlayPreview from './screens/PlayPreview'
 import { socket } from './net/socket'
 
 /**
  * App — 진입점
  * -------------------------------------------------------------
  * - URL 에 ?ctrl 이 있으면 "폰 컨트롤러" 화면 (다른 화면과 페어링).
+ * - ?preview=play 는 서버 없이 온라인 방 화면을 띄워 보는 프리뷰.
  * - 그 외에는 랜딩(GameHub) → 선택한 게임.
  *
  * 폰 컨트롤러 페어링은 "허브에서 한 번" 연결하고(아래 Main),
  * 게임들이 그 연결(phoneConnected)을 물려받아 쓴다.
- * (요트 다이스/멀티플레이 코드는 남겨뒀지만 지금은 라우팅하지 않음)
  */
-type GameId = 'pingpong' | 'rhythm' | 'reaction' | 'slasher'
+type GameId = 'pingpong' | 'rhythm' | 'reaction' | 'slasher' | 'yacht'
 
 export default function App() {
   const params = new URLSearchParams(window.location.search)
   if (params.has('ctrl')) {
     return <Controller initialCode={params.get('ctrl') || ''} />
+  }
+  if (params.get('preview') === 'play') {
+    return <PlayPreview />
   }
 
   return <Main />
@@ -97,12 +102,22 @@ function Main() {
     // 기술스택 슬래셔: 완전 클라이언트 사이드(터치/마우스 스와이프). 폰 컨트롤러 불필요.
     return <StackSlasher onExit={() => setGame(null)} />
   }
+  if (game === 'yacht') {
+    // 요트 다이스(솔로): 3D 물리 주사위. 폰에서 열면 흔들어서도 굴릴 수 있다.
+    return <YachtDice onExit={() => setGame(null)} />
+  }
 
   return (
     <GameHub
       initialGameId={lastGameId}
       onSelect={(id) => {
-        if (id === 'pingpong' || id === 'rhythm' || id === 'reaction' || id === 'slasher') {
+        if (
+          id === 'pingpong' ||
+          id === 'rhythm' ||
+          id === 'reaction' ||
+          id === 'slasher' ||
+          id === 'yacht'
+        ) {
           setGame(id)
           setLastGameId(id) // 나중에 나왔을 때 이 카드에 위치
         }

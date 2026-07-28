@@ -17,6 +17,14 @@ interface GameCard {
 
 const CARDS: GameCard[] = [
   {
+    id: 'yacht',
+    title: '요트 다이스',
+    desc: '진짜로 굴러가는 3D 주사위 5개. 12라운드 동안 족보를 채워 최고점에 도전!',
+    emoji: '🎲',
+    gradient: 'linear-gradient(160deg, #2f7458 0%, #1d5c46 46%, #10312a 100%)',
+    playable: true,
+  },
+  {
     id: 'pingpong',
     title: '핑퐁 스매시',
     desc: '3D 코트에서 날아오는 공을 타이밍 맞춰 받아치기. 정확한 순간에 스매시!',
