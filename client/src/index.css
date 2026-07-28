@@ -324,24 +324,227 @@ body {
 }
 
 /* =============================================================
-   게임 허브 카드
+   게임 허브 — 아케이드 캐비닛
+   -------------------------------------------------------------
+   게임 5종이 전부 다크 톤인데 허브만 밝아서 톤이 튀었다. 오락실 캐비닛의
+   곡선 스테이지 + 하단 필름스트립 구조로 통일한다.
+   --ac 는 "지금 선택된 게임의 대표색" — 스테이지 글로우·버튼·테두리가
+   이 변수를 따라가서, 카드를 넘기면 화면 전체 색이 그 게임으로 바뀐다.
    ============================================================= */
-.hub-card {
-  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.3, 1), box-shadow 0.22s;
+.arcade {
+  --ac: #d8a24a;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  color: #f2f5f9;
+  background:
+    radial-gradient(90% 60% at 50% -10%, color-mix(in oklab, var(--ac) 22%, transparent), transparent 70%),
+    radial-gradient(70% 50% at 50% 108%, #10161f, transparent 65%), #070a10;
+  transition: background 0.45s ease;
 }
-@media (hover: hover) {
-  .hub-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 26px 46px -20px rgba(20, 50, 80, 0.55) !important;
-  }
+/* 캐비닛 특유의 미세한 주사선 */
+.arcade::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(rgba(255, 255, 255, 0.028) 0 1px, transparent 1px 3px);
 }
-.hub-card:active {
-  transform: translateY(-1px) scale(0.99);
+/* 가장자리 비네팅 — 화면이 안으로 말려 들어가는 느낌 */
+.arcade::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 85% at 50% 45%, transparent 52%, rgba(0, 0, 0, 0.72) 100%);
 }
-.hub-card:focus-visible {
-  outline: 2px solid var(--coral);
-  outline-offset: 3px;
+
+/* 코너 브래킷 (레퍼런스의 모서리 금속판) */
+.ar-bracket {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border: 2px solid color-mix(in oklab, var(--ac) 70%, transparent);
+  pointer-events: none;
 }
+
+/* 스테이지 — 선택된 게임의 플레이 장면이 도는 곳 */
+.ar-stage {
+  position: relative;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 2px solid color-mix(in oklab, var(--ac) 55%, transparent);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.6),
+    0 0 44px -6px color-mix(in oklab, var(--ac) 45%, transparent),
+    0 30px 60px -24px #000;
+  transition: border-color 0.35s, box-shadow 0.35s;
+}
+
+/* 필름스트립 카드 */
+.ar-card {
+  position: absolute;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 2px solid rgba(255, 255, 255, 0.14);
+  background: #070a10;
+  transition: transform 0.32s cubic-bezier(0.2, 0.85, 0.25, 1), opacity 0.32s, border-color 0.32s,
+    box-shadow 0.32s;
+}
+.ar-card[data-on='1'] {
+  border-color: var(--ac);
+  box-shadow: 0 0 22px -2px color-mix(in oklab, var(--ac) 65%, transparent);
+}
+.ar-card:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+/* 플레이 버튼 */
+.ar-play {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--ac) 88%, #fff), var(--ac));
+  color: #10131a;
+  box-shadow: 0 0 26px -6px var(--ac), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  transition: filter 0.15s, transform 0.1s;
+}
+.ar-play:active {
+  transform: translateY(1px);
+  filter: brightness(0.94);
+}
+
+/* 좌우 화살표 */
+.ar-nav {
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  transition: border-color 0.2s, background 0.2s, transform 0.1s;
+}
+.ar-nav:not(:disabled):hover {
+  border-color: var(--ac);
+  background: color-mix(in oklab, var(--ac) 16%, transparent);
+}
+.ar-nav:not(:disabled):active {
+  transform: scale(0.94);
+}
+.ar-nav:disabled {
+  opacity: 0.22;
+}
+
+/* =============================================================
+   스테이지 플레이 시뮬레이션 — 선택된 카드(.ar-live)에서만 돈다
+   ============================================================= */
+
+/* 요트: 주사위가 위에서 떨어져 튀고 구른다 */
+@keyframes ar-die {
+  0% { transform: translateY(-180%) rotate(0deg); }
+  42% { transform: translateY(0) rotate(310deg); }
+  54% { transform: translateY(-26%) rotate(340deg); }
+  66% { transform: translateY(0) rotate(356deg); }
+  73% { transform: translateY(-8%) rotate(360deg); }
+  80%, 100% { transform: translateY(0) rotate(360deg); }
+}
+.ar-live .ar-die { animation: ar-die 3s cubic-bezier(0.3, 0.7, 0.4, 1) infinite; }
+.ar-live .ar-die1 { animation-delay: 0.14s; }
+.ar-live .ar-die2 { animation-delay: 0.28s; }
+
+/* 핑퐁: 공이 먼 코트 ↔ 가까운 코트를 오간다 (가까울수록 크게) */
+@keyframes ar-ball {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(6px, -16px) scale(0.62); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+@keyframes ar-pad-near {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(4px, 2px); }
+}
+@keyframes ar-pad-far {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-5px, 2px); }
+}
+.ar-live .ar-ball {
+  /* SVG 는 transform-origin 기본이 0 0 이라 scale 이 제자리에서 안 먹는다 */
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ar-ball 1.6s ease-in-out infinite;
+}
+.ar-live .ar-pad-near { animation: ar-pad-near 1.6s ease-in-out infinite; }
+.ar-live .ar-pad-far { animation: ar-pad-far 1.6s ease-in-out infinite; }
+
+/* 리듬: 노트가 레인 원근을 따라 판정선으로 떨어진다.
+   레인이 위로 갈수록 좁아지므로 left·width 도 같이 보간해야 레인 밖으로 안 나간다.
+   (레인 i: 위 [36+7i, 43+7i] → 아래 [25i, 25i+25], 폭의 84% 만 노트로 쓴다) */
+/* 레인 i: 위 [36+7i, 43+7i] → 아래 [25i, 25i+25]. 노트는 그 높이의 레인 폭 84% 를 쓴다.
+   top 0%→87%(판정선)에 맞춰 left·width 를 같은 t 로 보간해야 레인 밖으로 안 나간다. */
+@keyframes ar-note0 {
+  0% { top: 0%; left: 36.56%; width: 5.88%; height: 3%; opacity: 0; }
+  14% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { top: 87%; left: 6.49%; width: 19.03%; height: 7%; opacity: 0; }
+}
+@keyframes ar-note1 {
+  0% { top: 0%; left: 43.56%; width: 5.88%; height: 3%; opacity: 0; }
+  14% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { top: 87%; left: 29.15%; width: 19.03%; height: 7%; opacity: 0; }
+}
+@keyframes ar-note2 {
+  0% { top: 0%; left: 50.56%; width: 5.88%; height: 3%; opacity: 0; }
+  14% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { top: 87%; left: 51.81%; width: 19.03%; height: 7%; opacity: 0; }
+}
+@keyframes ar-note3 {
+  0% { top: 0%; left: 57.56%; width: 5.88%; height: 3%; opacity: 0; }
+  14% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { top: 87%; left: 74.47%; width: 19.03%; height: 7%; opacity: 0; }
+}
+.ar-live .ar-note { animation-duration: 1.5s; animation-timing-function: linear; animation-iteration-count: infinite; }
+.ar-live .ar-note0 { animation-name: ar-note0; }
+.ar-live .ar-note1 { animation-name: ar-note1; animation-delay: 0.34s; }
+.ar-live .ar-note2 { animation-name: ar-note2; animation-delay: 0.68s; }
+.ar-live .ar-note3 { animation-name: ar-note3; animation-delay: 1.02s; }
+@keyframes ar-judge {
+  0%, 82%, 100% { opacity: 0.75; }
+  88% { opacity: 1; box-shadow: 0 0 26px #fff, 0 0 44px #a855f7; }
+}
+.ar-live .ar-judge { animation: ar-judge 1.5s linear infinite; }
+
+/* 퀵드로우: 신호등이 빨강→노랑→초록으로 돌고, 초록에 두 총잡이가 쏜다 */
+@keyframes ar-lamp-r { 0%, 30% { fill: #e2513c; } 31%, 100% { fill: #7a1f14; } }
+@keyframes ar-lamp-a { 0%, 30% { fill: #6b4a24; } 31%, 62% { fill: #f59e0b; } 63%, 100% { fill: #6b4a24; } }
+@keyframes ar-lamp-g { 0%, 62% { fill: #1d5c46; } 63%, 100% { fill: #4ade80; } }
+@keyframes ar-lamp-glow { 0%, 62% { opacity: 0; } 66% { opacity: 0.55; } 100% { opacity: 0.2; } }
+@keyframes ar-muzzle { 0%, 66% { opacity: 0; transform: scale(0.2); } 70% { opacity: 1; transform: scale(1.15); } 78%, 100% { opacity: 0; transform: scale(0.5); } }
+@keyframes ar-gun-l { 0%, 66% { transform: translate(28px, 0); } 71% { transform: translate(26px, 0); } 80%, 100% { transform: translate(28px, 0); } }
+@keyframes ar-gun-r { 0%, 66% { transform: translate(132px, 0) scale(-1, 1); } 71% { transform: translate(134px, 0) scale(-1, 1); } 80%, 100% { transform: translate(132px, 0) scale(-1, 1); } }
+.ar-live .ar-lamp-r { animation: ar-lamp-r 3.2s steps(1, end) infinite; }
+.ar-live .ar-lamp-a { animation: ar-lamp-a 3.2s steps(1, end) infinite; }
+.ar-live .ar-lamp-g { animation: ar-lamp-g 3.2s steps(1, end) infinite; }
+.ar-live .ar-lamp-glow { animation: ar-lamp-glow 3.2s ease-out infinite; }
+.ar-live .ar-muzzle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ar-muzzle 3.2s ease-out infinite;
+}
+.ar-live .ar-gun-l { animation: ar-gun-l 3.2s ease-out infinite; }
+.ar-live .ar-gun-r { animation: ar-gun-r 3.2s ease-out infinite; }
+
+/* 슬래셔: 검격이 화면을 가로지르고 로고 칩이 떠다닌다 */
+@keyframes ar-slash {
+  0% { transform: translateX(-115%); opacity: 0; }
+  12% { opacity: 1; }
+  46% { opacity: 1; }
+  62%, 100% { transform: translateX(115%); opacity: 0; }
+}
+@keyframes ar-chip {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -7px; }
+}
+.ar-live .ar-slash { animation: ar-slash 2.4s cubic-bezier(0.5, 0, 0.4, 1) infinite; }
+.ar-live .ar-chip { animation: ar-chip 3s ease-in-out infinite; }
+.ar-live .ar-chip1 { animation-delay: 0.4s; }
+.ar-live .ar-chip2 { animation-delay: 0.8s; }
+.ar-live .ar-chip3 { animation-delay: 1.2s; }
 
 /* 리액션 이모지 떠오르기 */
 @keyframes reaction-float {
@@ -598,12 +801,28 @@ body {
 
 /* 접근성: 모션 최소화 설정이면 굴리기/떠오르기 애니메이션 생략 */
 @media (prefers-reduced-motion: reduce) {
-  .hub-card {
-    transition: none;
+  /* 허브 스테이지의 플레이 시뮬레이션은 장식이라 통째로 끈다 (정지 화면으로 남는다) */
+  .ar-live .ar-die,
+  .ar-live .ar-ball,
+  .ar-live .ar-pad-near,
+  .ar-live .ar-pad-far,
+  .ar-live .ar-note,
+  .ar-live .ar-judge,
+  .ar-live .ar-lamp-r,
+  .ar-live .ar-lamp-a,
+  .ar-live .ar-lamp-g,
+  .ar-live .ar-lamp-glow,
+  .ar-live .ar-muzzle,
+  .ar-live .ar-gun-l,
+  .ar-live .ar-gun-r,
+  .ar-live .ar-slash,
+  .ar-live .ar-chip {
+    animation: none;
   }
-  .hub-card:hover,
-  .hub-card:active {
-    transform: none;
+  .ar-card,
+  .ar-stage,
+  .arcade {
+    transition: none;
   }
   .animate-reaction,
   .yd-flash,
