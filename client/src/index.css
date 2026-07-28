@@ -323,6 +323,26 @@ body {
   animation: yd-rise 0.32s cubic-bezier(0.2, 0.9, 0.25, 1) both;
 }
 
+/* =============================================================
+   게임 허브 카드
+   ============================================================= */
+.hub-card {
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.3, 1), box-shadow 0.22s;
+}
+@media (hover: hover) {
+  .hub-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 26px 46px -20px rgba(20, 50, 80, 0.55) !important;
+  }
+}
+.hub-card:active {
+  transform: translateY(-1px) scale(0.99);
+}
+.hub-card:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 3px;
+}
+
 /* 리액션 이모지 떠오르기 */
 @keyframes reaction-float {
   0% { transform: translateY(0) scale(0.6); opacity: 0; }
@@ -578,6 +598,13 @@ body {
 
 /* 접근성: 모션 최소화 설정이면 굴리기/떠오르기 애니메이션 생략 */
 @media (prefers-reduced-motion: reduce) {
+  .hub-card {
+    transition: none;
+  }
+  .hub-card:hover,
+  .hub-card:active {
+    transform: none;
+  }
   .animate-reaction,
   .yd-flash,
   .animate-combo-pop,

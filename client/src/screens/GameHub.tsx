@@ -1,66 +1,14 @@
-import { useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { GAME_CARDS, type GameCard } from './gameCards'
 
 /**
- * GameHub — 랜딩 (카드 캐러셀로 게임 선택)
+ * GameHub — 랜딩 (게임 선택)
  * -------------------------------------------------------------
- * 카드를 좌우로 넘기며(드래그/화살표/점) 게임을 고른다.
- * 가운데(활성) 카드의 "플레이" 버튼으로 시작.
+ * 캐러셀에서 그리드로 바꿨다. 캐러셀은 한 번에 한 장만 읽혀서 어떤 게임이
+ * 있는지 알려면 끝까지 넘겨봐야 했다. 파티 게임 허브는 "뭐 있는지 한눈에"가
+ * 먼저라 전부 펼쳐 보여준다.
+ *
+ * 카드 아트는 gameCards.tsx 에서 각 게임 플레이 화면 색으로 그린다.
  */
-interface GameCard {
-  id: string
-  title: string
-  desc: string
-  emoji: string
-  gradient: string
-  playable: boolean
-}
-
-const CARDS: GameCard[] = [
-  {
-    id: 'yacht',
-    title: '요트 다이스',
-    desc: '진짜로 굴러가는 3D 주사위 5개. 12라운드 동안 족보를 채워 최고점에 도전!',
-    emoji: '🎲',
-    gradient: 'linear-gradient(160deg, #2f7458 0%, #1d5c46 46%, #10312a 100%)',
-    playable: true,
-  },
-  {
-    id: 'pingpong',
-    title: '핑퐁 스매시',
-    desc: '3D 코트에서 날아오는 공을 타이밍 맞춰 받아치기. 정확한 순간에 스매시!',
-    emoji: '🏓',
-    gradient: 'linear-gradient(160deg, #2b8fe0, #1c86cf 55%, #12639e)',
-    playable: true,
-  },
-  {
-    id: 'rhythm',
-    title: '리듬 탭',
-    desc: '내려오는 네온 노트를 Perfect·콤보로 점수 쌓기!',
-    emoji: '🎵',
-    gradient: 'linear-gradient(160deg, #22d3ee 0%, #7c3aed 55%, #db2777 100%)',
-    playable: true,
-  },
-  {
-    id: 'reaction',
-    title: '황야의 퀵드로우',
-    desc: '석양의 결투. 신호등이 초록으로 바뀌는 순간 먼저 뽑아라! 3발 맞으면 쓰러진다.',
-    emoji: '🤠',
-    gradient: 'linear-gradient(160deg, #f2a545 0%, #cf5f2c 42%, #86302c 72%, #3d1230 100%)',
-    playable: true,
-  },
-  {
-    id: 'slasher',
-    title: '기술스택 슬래셔',
-    desc: '날아오는 기술 로고를 광선검으로 베기! 60초 타임어택 · 개발자 유형 판정.',
-    emoji: '🗡️',
-    gradient: 'linear-gradient(160deg, #0891b2 0%, #22d3ee 45%, #e935c1 100%)',
-    playable: true,
-  },
-]
-
-const STEP = 250 // 카드 간 이동 거리(px)
-const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
-
 interface GameHubProps {
   onSelect: (id: string) => void
   onController: () => void
@@ -68,7 +16,7 @@ interface GameHubProps {
   phoneConnected: boolean // 폰 컨트롤러가 하나라도 붙었는가
   phoneCount: number // 연결된 폰 컨트롤러 수
   onConnectPhone: () => void // "폰 연결" 시작(코드 발급)
-  initialGameId?: string | null // 방금 플레이한 게임 → 이 카드에서 시작(없으면 첫 카드)
+  initialGameId?: string | null // 방금 플레이한 게임 → 카드에 표시
 }
 
 export default function GameHub({
@@ -80,195 +28,223 @@ export default function GameHub({
   onConnectPhone,
   initialGameId,
 }: GameHubProps) {
-  // 게임에서 나왔을 때 방금 한 게임 카드에 위치 (허브 재진입 시 마운트되며 반영)
-  const [index, setIndex] = useState(() => {
-    const i = CARDS.findIndex((c) => c.id === initialGameId)
-    return i >= 0 ? i : 0
-  })
-  const [drag, setDrag] = useState(0)
-  const [dragging, setDragging] = useState(false)
-  const startX = useRef<number | null>(null)
-  const moved = useRef(false)
-
-  // 주의: setPointerCapture 를 쓰면 카드 버튼의 click 이 삼켜져 "플레이"가 안 눌린다.
-  // 그래서 캡처는 쓰지 않고, 포인터가 영역을 벗어나면 onUp 으로 정리한다.
-  const onDown = (e: ReactPointerEvent) => {
-    startX.current = e.clientX
-    moved.current = false
-    setDragging(true)
-  }
-  const onMove = (e: ReactPointerEvent) => {
-    if (startX.current == null) return
-    const dx = e.clientX - startX.current
-    if (Math.abs(dx) > 6) moved.current = true
-    setDrag(dx)
-  }
-  const onUp = () => {
-    if (startX.current == null) return
-    let ni = index
-    if (drag > 55) ni -= 1
-    else if (drag < -55) ni += 1
-    setIndex(clamp(ni, 0, CARDS.length - 1))
-    setDrag(0)
-    setDragging(false)
-    startX.current = null
-  }
-
-  const go = (d: number) => setIndex((i) => clamp(i + d, 0, CARDS.length - 1))
-
-  const activate = (card: GameCard) => {
-    if (moved.current) return // 드래그였으면 클릭으로 취급 안 함
-    if (card.playable) onSelect(card.id)
-  }
-
   return (
-    <div className="min-h-full flex flex-col items-center px-4 py-8">
-      {/* 헤더 */}
-      <header className="text-center mb-2">
-        <div className="label-mono text-[var(--ink-3)]">YORR · GAME</div>
-        <h1 className="text-3xl font-black text-[var(--ink)] mt-1">게임 선택</h1>
-        <p className="text-sm text-[var(--ink-2)] mt-1">다양한 게임을 즐겨보세요</p>
-      </header>
+    <div className="min-h-full px-4 pb-10 pt-8 sm:px-6">
+      <div className="mx-auto w-full max-w-[1040px]">
+        <Header count={GAME_CARDS.length} phoneCount={phoneCount} />
 
-      {/* 캐러셀 */}
-      <div
-        className="relative w-full max-w-md flex-1 flex items-center justify-center touch-none"
-        style={{ perspective: '1100px' }}
-        onPointerDown={onDown}
-        onPointerMove={onMove}
-        onPointerUp={onUp}
-        onPointerCancel={onUp}
-        onPointerLeave={onUp}
-      >
-        {CARDS.map((card, i) => {
-          const p = i - index - drag / STEP // 활성=0
-          const active = Math.abs(p) < 0.5
-          const style: CSSProperties = {
-            transform: `translateX(${p * STEP}px) scale(${clamp(1 - Math.abs(p) * 0.16, 0.78, 1)}) rotateY(${clamp(-p * 22, -30, 30)}deg)`,
-            opacity: clamp(1 - Math.abs(p) * 0.4, 0.12, 1),
-            zIndex: 100 - Math.round(Math.abs(p) * 10),
-            pointerEvents: active ? 'auto' : 'none',
-            // 드래그 중엔 손가락을 즉시 따라오도록 트랜지션 끔
-            transition: dragging ? 'none' : undefined,
-          }
-          return (
-            <button
+        {/* 카드 그리드 — 마지막 줄이 비어 보이지 않게 가운데 정렬 */}
+        <div className="mt-7 flex flex-wrap justify-center gap-4 sm:gap-5">
+          {GAME_CARDS.map((card) => (
+            <Card
               key={card.id}
-              onClick={() => activate(card)}
-              style={style}
-              className="absolute w-[230px] h-[360px] rounded-3xl shadow-2xl transition-[transform,opacity] duration-300 ease-out text-left overflow-hidden"
-            >
-              <div className="w-full h-full flex flex-col p-6 text-white" style={{ background: card.gradient }}>
-                <div className="text-6xl mb-4 drop-shadow">{card.emoji}</div>
-                <h2 className="text-2xl font-black">{card.title}</h2>
-                <p className="text-sm text-white/85 mt-2 leading-relaxed flex-1">{card.desc}</p>
-                {card.playable ? (
-                  <span className="mt-3 inline-flex items-center justify-center rounded-xl bg-white/95 text-[var(--ink)] font-bold py-2.5">
-                    플레이 ▶
-                  </span>
-                ) : (
-                  <span className="mt-3 inline-flex items-center justify-center rounded-xl bg-black/20 text-white/80 font-semibold py-2.5">
-                    준비 중
-                  </span>
-                )}
-              </div>
-            </button>
-          )
-        })}
-      </div>
-
-      {/* 화살표 + 점 */}
-      <div className="flex items-center gap-5 mt-6">
-        <button
-          onClick={() => go(-1)}
-          disabled={index === 0}
-          aria-label="이전 게임"
-          className="w-10 h-10 rounded-full bg-[var(--card)] border border-[var(--line)] text-[var(--ink)] disabled:opacity-30 shadow-sm"
-        >
-          ‹
-        </button>
-        <div className="flex gap-2">
-          {CARDS.map((c, i) => (
-            <button
-              key={c.id}
-              onClick={() => setIndex(i)}
-              aria-label={`${c.title}로 이동`}
-              className="h-2 rounded-full transition-all"
-              style={{
-                width: i === index ? 22 : 8,
-                background: i === index ? 'var(--coral)' : 'var(--line-2)',
-              }}
+              card={card}
+              last={card.id === initialGameId}
+              onClick={() => onSelect(card.id)}
             />
           ))}
         </div>
-        <button
-          onClick={() => go(1)}
-          disabled={index === CARDS.length - 1}
-          aria-label="다음 게임"
-          className="w-10 h-10 rounded-full bg-[var(--card)] border border-[var(--line)] text-[var(--ink)] disabled:opacity-30 shadow-sm"
-        >
-          ›
-        </button>
-      </div>
 
-      {/* 폰으로 같이 하기 — 코드는 항상 유지, 여러 대 연결 + 연결 수 표시 */}
-      <div className="mt-6 w-full max-w-sm">
-        {pairCode ? (
-          // 코드 발급됨(이 기기=화면): 코드를 계속 보여주고, 붙은 폰 수를 실시간 표시
-          <div className="rounded-2xl bg-[var(--card)] border border-[var(--line)] p-3 shadow-sm">
-            <div className="flex items-center justify-center gap-2 mb-1">
-              <span className="text-sm font-bold text-[var(--ink)]">📱 폰 컨트롤러 연동</span>
-              <span
-                className={`text-xs font-bold rounded-full px-2 py-0.5 ${
-                  phoneCount > 0
-                    ? 'bg-[var(--pos)]/15 text-[var(--pos)]'
-                    : 'bg-[var(--line-2)] text-[var(--ink-3)]'
-                }`}
-              >
-                🎮 {phoneCount}대 연결됨
-              </span>
-            </div>
-            <div className="text-4xl font-black tracking-[0.3em] text-[var(--coral)] text-center my-1">
-              {pairCode}
-            </div>
-            <div className="mt-2 pt-2 border-t border-[var(--line)] text-center text-xs">
-              {phoneConnected ? (
-                <span className="text-[var(--pos)] font-bold">
-                  연결됨 — 게임에서 바로 사용 (퀵드로우는 2대면 폰 2대 결투!)
-                </span>
-              ) : (
-                <span className="text-[var(--ink-3)]">컨트롤러를 연동하세요 — 위 코드를 폰에 입력</span>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-2xl bg-[var(--card)] border border-[var(--line)] p-3 shadow-sm">
-            <div className="text-xs font-bold text-[var(--ink-3)] text-center mb-2">
-              📱 폰으로 즐기세요
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              {/* 이 기기 = 화면 (호스트): 코드 발급/표시 */}
-              <button
-                onClick={onConnectPhone}
-                className="flex flex-col items-center gap-0.5 rounded-xl bg-[var(--card-2)] border border-[var(--line)] py-3 active:scale-95 transition"
-              >
-                <span className="text-2xl leading-none">🖥️</span>
-                <span className="text-xs font-bold text-[var(--ink)] mt-1">폰 연결 코드 발급</span>
-                <span className="text-[10px] text-[var(--ink-3)]">화면에 폰 여러 대 페어링</span>
-              </button>
-              {/* 이 기기 = 조종기 (게스트): ?ctrl 화면으로 */}
-              <button
-                onClick={onController}
-                className="flex flex-col items-center gap-0.5 rounded-xl bg-[var(--card-2)] border border-[var(--line)] py-3 active:scale-95 transition"
-              >
-                <span className="text-2xl leading-none">🎮</span>
-                <span className="text-xs font-bold text-[var(--ink)] mt-1">폰 컨트롤러 연결</span>
-                <span className="text-[10px] text-[var(--ink-3)]">휴대폰 조종</span>
-              </button>
-            </div>
-          </div>
-        )}
+        <PhonePanel
+          pairCode={pairCode}
+          phoneConnected={phoneConnected}
+          phoneCount={phoneCount}
+          onConnectPhone={onConnectPhone}
+          onController={onController}
+        />
       </div>
     </div>
+  )
+}
+
+/* ── 헤더 ── */
+function Header({ count, phoneCount }: { count: number; phoneCount: number }) {
+  return (
+    <header className="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <div className="label-mono text-[var(--ink-3)]">YORR · ARCADE</div>
+        <h1 className="mt-1.5 text-[32px] font-black leading-none tracking-tight text-[var(--ink)] sm:text-[40px]">
+          무엇을 하고 놀까?
+        </h1>
+        <p className="mt-2 text-sm text-[var(--ink-2)]">
+          게임 {count}개 · 폰을 컨트롤러로 연결하면 다 같이 즐길 수 있어요
+        </p>
+      </div>
+      {phoneCount > 0 && (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--pos)]/12 px-3 py-1.5 text-xs font-bold text-[var(--pos)]">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--pos)] opacity-60" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--pos)]" />
+          </span>
+          폰 {phoneCount}대 연결됨
+        </span>
+      )}
+    </header>
+  )
+}
+
+/* ── 게임 카드 ── */
+function Card({ card, last, onClick }: { card: GameCard; last: boolean; onClick: () => void }) {
+  const { Art } = card
+  return (
+    <button
+      onClick={onClick}
+      className="hub-card group relative w-full overflow-hidden rounded-[22px] border border-[var(--line)] bg-[var(--card)] text-left sm:w-[calc(50%-10px)] lg:w-[326px]"
+      style={{ boxShadow: '0 14px 34px -18px rgba(20,50,80,0.45)' }}
+    >
+      {/* 아트 */}
+      <div className="relative aspect-[16/9] overflow-hidden">
+        <Art />
+        {/* 아래로 어두워지는 스크림 — 이모지·배지가 어떤 아트 위에서도 읽히게 */}
+        <div
+          className="absolute inset-x-0 bottom-0 h-2/5"
+          style={{ background: 'linear-gradient(transparent, rgba(0,0,0,0.55))' }}
+        />
+        <span className="absolute bottom-2.5 left-3.5 text-[30px] leading-none drop-shadow-lg">
+          {card.emoji}
+        </span>
+        {last && (
+          <span className="absolute right-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[10px] font-bold text-white backdrop-blur-sm">
+            방금 플레이
+          </span>
+        )}
+        {/* 대표색 밑줄 */}
+        <div className="absolute inset-x-0 bottom-0 h-[3px]" style={{ background: card.accent }} />
+      </div>
+
+      {/* 정보 */}
+      <div className="p-4">
+        <h2 className="text-[17px] font-black text-[var(--ink)]">{card.title}</h2>
+        <p className="mt-1 min-h-[2.6em] text-[13px] leading-relaxed text-[var(--ink-2)]">{card.desc}</p>
+
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          {card.tags.map((t) => (
+            <span
+              key={t}
+              className="rounded-md bg-[var(--card-2)] px-2 py-1 text-[11px] font-semibold text-[var(--ink-2)]"
+            >
+              {t}
+            </span>
+          ))}
+        </div>
+
+        <div
+          className="mt-3.5 flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-bold text-white transition-[filter] group-active:brightness-95"
+          style={{ background: card.accent }}
+        >
+          플레이 <span className="text-xs">▶</span>
+        </div>
+      </div>
+    </button>
+  )
+}
+
+/* ── 폰 연동 패널 ── */
+interface PhonePanelProps {
+  pairCode: string | null
+  phoneConnected: boolean
+  phoneCount: number
+  onConnectPhone: () => void
+  onController: () => void
+}
+function PhonePanel({
+  pairCode,
+  phoneConnected,
+  phoneCount,
+  onConnectPhone,
+  onController,
+}: PhonePanelProps) {
+  return (
+    <section
+      className="mx-auto mt-8 w-full max-w-[680px] overflow-hidden rounded-[22px] border border-[var(--line)] bg-[var(--card)]"
+      style={{ boxShadow: '0 14px 34px -20px rgba(20,50,80,0.4)' }}
+    >
+      <div className="flex items-center gap-2 border-b border-[var(--line)] bg-[var(--card-2)] px-5 py-3">
+        <span className="text-base">📱</span>
+        <span className="text-sm font-bold text-[var(--ink)]">폰 컨트롤러</span>
+        <span className="text-xs text-[var(--ink-3)]">— 폰을 흔들어 조종해요</span>
+      </div>
+
+      {pairCode ? (
+        <div className="px-5 py-5">
+          <p className="text-center text-xs text-[var(--ink-3)]">
+            폰 브라우저로 접속해 아래 코드를 입력하세요
+          </p>
+          {/* 코드 — 글자마다 타일로 (한 덩어리 텍스트보다 훨씬 읽기 쉽다) */}
+          <div className="mt-3 flex justify-center gap-2">
+            {pairCode.split('').map((ch, i) => (
+              <span
+                key={i}
+                className="flex h-14 w-12 items-center justify-center rounded-xl border border-[var(--line-2)] bg-[var(--card-2)] text-3xl font-black text-[var(--coral)]"
+              >
+                {ch}
+              </span>
+            ))}
+          </div>
+          <div className="mt-4 flex items-center justify-center gap-2 text-xs">
+            {phoneConnected ? (
+              <>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--pos)]/12 px-2.5 py-1 font-bold text-[var(--pos)]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--pos)]" />
+                  {phoneCount}대 연결됨
+                </span>
+                <span className="text-[var(--ink-3)]">
+                  퀵드로우는 2대면 폰끼리 결투!
+                </span>
+              </>
+            ) : (
+              <span className="text-[var(--ink-3)]">아직 연결된 폰이 없어요 — 여러 대 붙일 수 있어요</span>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="grid gap-3 px-5 py-5 sm:grid-cols-2">
+          <PanelChoice
+            emoji="🖥️"
+            title="이 기기를 화면으로"
+            desc="연결 코드를 발급해 폰을 붙입니다"
+            onClick={onConnectPhone}
+            primary
+          />
+          <PanelChoice
+            emoji="🎮"
+            title="이 폰을 컨트롤러로"
+            desc="다른 화면의 코드를 입력합니다"
+            onClick={onController}
+          />
+        </div>
+      )}
+    </section>
+  )
+}
+
+function PanelChoice({
+  emoji,
+  title,
+  desc,
+  onClick,
+  primary,
+}: {
+  emoji: string
+  title: string
+  desc: string
+  onClick: () => void
+  primary?: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-3 rounded-2xl border px-4 py-3.5 text-left transition active:scale-[0.98] ${
+        primary
+          ? 'border-[var(--coral)]/35 bg-[var(--coral)]/[0.07]'
+          : 'border-[var(--line)] bg-[var(--card-2)]'
+      }`}
+    >
+      <span className="text-2xl leading-none">{emoji}</span>
+      <span className="min-w-0">
+        <span className="block text-[13px] font-bold text-[var(--ink)]">{title}</span>
+        <span className="block text-[11px] leading-snug text-[var(--ink-3)]">{desc}</span>
+      </span>
+    </button>
   )
 }
