@@ -57,6 +57,10 @@ const POINT_COUNTDOWN_MS = 2600 // 득점 후: 플래시 → 3·2·1 → 서브 
 const SWING_MS = 260 // 라켓 스윙 연출 길이
 const SWING_LOCK_MS = 260 // 헛스윙 후 다시 휘두르기까지 (키보드·탭 연타 방지, 폰 스윙 제외)
 const SHAKE_MS = 190 // 스매시 화면 흔들림 길이
+/** 폰 입력 편도 지연이 이보다 크면 화면에 경고를 띄운다.
+ *  실측(같은 핫스팟, WebSocket) 6~7ms. 이 값을 넘으면 스매시 퍼펙트 창(62ms)
+ *  대비 무시 못 할 크기가 되기 시작한다. */
+const LATENCY_WARN_MS = 25
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
@@ -793,10 +797,11 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
           ) : phoneConnected ? (
             <span className="text-xs text-[#49e08a]">
               📱 폰 연결됨 🟢
-              {lat?.oneWayMs != null && (
-                // 편도 지연 (흔들림). 25ms 넘으면 판정 보정을 넣을 값어치가 있다.
-                <span className={lat.oneWayMs > 25 ? 'ml-2 text-[#ffd24a]' : 'ml-2 text-white/45'}>
-                  {Math.round(lat.oneWayMs)}ms
+              {/* 평소엔 안 띄운다 — 파티 게임에 상시 ms 표시는 개발자스럽다.
+                  느려졌을 때만 경고로 나타나 "왜 안 맞지?" 를 설명해 준다. */}
+              {lat?.oneWayMs != null && lat.oneWayMs > LATENCY_WARN_MS && (
+                <span className="ml-2 text-[#ffd24a]">
+                  ⚠ 입력 지연 {Math.round(lat.oneWayMs)}ms
                   {lat.jitterMs != null && ` (±${Math.round(lat.jitterMs / 2)})`}
                 </span>
               )}
