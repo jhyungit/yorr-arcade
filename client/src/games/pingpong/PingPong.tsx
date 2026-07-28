@@ -9,6 +9,7 @@ import {
 import { useSwing } from './useSwing'
 import OnlineLobby from './OnlineLobby'
 import { socket } from '../../net/socket'
+import { startLatencyProbe, type LatencyStat } from '../../net/latency'
 import { feedbackShake, feedbackThrow, unlockAudio } from '../../lib/feedback'
 import { createScene, type FrameState, type PingPongScene } from './scene3d'
 import {
@@ -56,6 +57,10 @@ const POINT_COUNTDOWN_MS = 2600 // 득점 후: 플래시 → 3·2·1 → 서브 
 const SWING_MS = 260 // 라켓 스윙 연출 길이
 const SWING_LOCK_MS = 260 // 헛스윙 후 다시 휘두르기까지 (키보드·탭 연타 방지, 폰 스윙 제외)
 const SHAKE_MS = 190 // 스매시 화면 흔들림 길이
+/** 폰 입력 편도 지연이 이보다 크면 화면에 경고를 띄운다.
+ *  실측(같은 핫스팟, WebSocket) 6~7ms. 이 값을 넘으면 스매시 퍼펙트 창(62ms)
+ *  대비 무시 못 할 크기가 되기 시작한다. */
+const LATENCY_WARN_MS = 25
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
@@ -239,6 +244,13 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
   const [online, setOnline] = useState<{ role: 'host' | 'guest' } | null>(null)
   const [oppLeft, setOppLeft] = useState(false)
   const [combo, setCombo] = useState<{ count: number; id: number } | null>(null)
+  // 폰 입력 지연 — 아직 '측정만' 한다. 보정 적용 여부는 실측값 보고 정한다.
+  const [lat, setLat] = useState<LatencyStat | null>(null)
+
+  useEffect(() => {
+    if (!phoneConnected) return setLat(null)
+    return startLatencyProbe(setLat)
+  }, [phoneConnected])
 
   // 모든 입력의 단일 진입점.
   // - online-guest: 로컬 시뮬 대신 서버로 스윙 전송
@@ -783,7 +795,17 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
               온라인 · {online.role === 'host' ? '내가 방장' : '참가'}
             </span>
           ) : phoneConnected ? (
-            <span className="text-xs text-[#49e08a]">📱 폰 연결됨 🟢</span>
+            <span className="text-xs text-[#49e08a]">
+              📱 폰 연결됨 🟢
+              {/* 평소엔 안 띄운다 — 파티 게임에 상시 ms 표시는 개발자스럽다.
+                  느려졌을 때만 경고로 나타나 "왜 안 맞지?" 를 설명해 준다. */}
+              {lat?.oneWayMs != null && lat.oneWayMs > LATENCY_WARN_MS && (
+                <span className="ml-2 text-[#ffd24a]">
+                  ⚠ 입력 지연 {Math.round(lat.oneWayMs)}ms
+                  {lat.jitterMs != null && ` (±${Math.round(lat.jitterMs / 2)})`}
+                </span>
+              )}
+            </span>
           ) : ui.mode === 'solo' && ui.phase !== 'ready' ? (
             <span className="label-mono text-white/40">1인 · {DIFF_LABEL[ui.diff]}</span>
           ) : (

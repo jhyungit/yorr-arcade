@@ -236,6 +236,16 @@ io.on('connection', (socket) => {
     if (pairCode) socket.to('pair:' + pairCode).emit('ctrl:swing', { player: pairPlayer })
   })
 
+  /* ── 입력 지연 측정 (노트북 ↔ 폰 왕복) ──
+     노트북이 ping 을 던지면 폰이 그대로 pong 으로 돌려준다. 노트북은 왕복 시간의
+     절반을 "폰 입력이 늦게 도착하는 시간"으로 본다. 서버는 내용을 안 보고 중계만. */
+  socket.on('ctrl:ping', (data) => {
+    if (pairCode) socket.to('pair:' + pairCode).emit('ctrl:ping', data)
+  })
+  socket.on('ctrl:pong', (data) => {
+    if (pairCode) socket.to('pair:' + pairCode).emit('ctrl:pong', { ...data, player: pairPlayer })
+  })
+
   /** 폰 슬라이스(터치패드 좌표) → 노트북 슬래셔로 중계 ({x,y: 0~1 정규화, t:'down'|'move'|'up'}) */
   socket.on('ctrl:slash', (data) => {
     if (pairCode) socket.to('pair:' + pairCode).emit('ctrl:slash', { ...data, player: pairPlayer })
