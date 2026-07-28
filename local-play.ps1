@@ -50,30 +50,72 @@ if (-not (Test-Path (Join-Path $server "node_modules"))) {
     Push-Location $server; & $npmCmd install; Pop-Location
 }
 
+# 지금 비어 있는 포트 찾기.
+#  안 하면 Vite 가 조용히 다음 포트로 옮겨가는데(5173 사용중 → 5174) 아래 안내문은
+#  이미 5173 으로 출력돼 버려서 "어디로 들어가야 하지?" 가 된다.
+function Find-FreePort([int]$from) {
+    for ($p = $from; $p -lt ($from + 20); $p++) {
+        if (-not (Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue)) { return $p }
+    }
+    return $from
+}
+
+# 폰이 들어올 수 있는 실제 IP 하나.
+#  ★ "사설 IP 대역"으로 거르면 안 된다. WSL·Hyper-V 가상 어댑터가 172.16~31 대역이라
+#    같이 걸리고, 반대로 학교 와이파이가 주는 70.x 같은 주소는 빠진다.
+#    물리 어댑터(-Physical)이면서 연결된 것만 보고, 무선을 우선한다.
+function Get-PhoneIp {
+    $cands = Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
+        Where-Object { $_.Status -eq 'Up' } |
+        ForEach-Object {
+            $name = $_.Name
+            Get-NetIPAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                Where-Object { $_.IPAddress -notlike '169.254.*' } |
+                ForEach-Object { [pscustomobject]@{ Ip = $_.IPAddress; Name = $name } }
+        }
+    if (-not $cands) { return $null }
+    # 무선(Wi-Fi / 무선) 어댑터 우선 — 폰은 와이파이·핫스팟으로 붙는다
+    $wifi = $cands | Where-Object { $_.Name -match 'Wi-?Fi|무선' } | Select-Object -First 1
+    if ($wifi) { return $wifi }
+    return ($cands | Select-Object -First 1)
+}
+
+$port = Find-FreePort 5173
+$phone = Get-PhoneIp
+
 # 1) 실시간 서버를 새 창에서 실행 (node 로 직접 실행)
-Write-Host "[1/2] 실시간 서버(포트 3001)를 새 창에서 시작합니다..." -ForegroundColor Cyan
-$serverCmd = "`$env:Path=[System.Environment]::GetEnvironmentVariable('Path','Machine')+';'+[System.Environment]::GetEnvironmentVariable('Path','User'); Set-Location '$server'; node index.js"
-Start-Process powershell -ArgumentList "-NoExit", "-NoProfile", "-Command", $serverCmd
-
-Start-Sleep -Seconds 2
-
-# 접속 주소 안내 (Wi-Fi/핫스팟에 잡힌 사설 IP)
-$ips = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-    Where-Object { $_.IPAddress -match '^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)' } |
-    Select-Object -ExpandProperty IPAddress
+if (Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue) {
+    Write-Host "[안내] 포트 3001 에 이미 서버가 떠 있어 새로 띄우지 않습니다." -ForegroundColor Yellow
+    Write-Host "       (예전 창이 남아 있는 것일 수 있습니다. 이상하면 그 창들을 닫고 다시 실행하세요.)" -ForegroundColor DarkGray
+} else {
+    Write-Host "[1/2] 실시간 서버(포트 3001)를 새 창에서 시작합니다..." -ForegroundColor Cyan
+    $serverCmd = "`$env:Path=[System.Environment]::GetEnvironmentVariable('Path','Machine')+';'+[System.Environment]::GetEnvironmentVariable('Path','User'); Set-Location '$server'; node index.js"
+    Start-Process powershell -ArgumentList "-NoExit", "-NoProfile", "-Command", $serverCmd
+    Start-Sleep -Seconds 2
+}
 
 Write-Host ""
 Write-Host "==================================================================" -ForegroundColor Green
-Write-Host " 폰 브라우저 주소창에 아래 주소 중 하나를 입력하세요:" -ForegroundColor Green
-if ($ips) { foreach ($ip in $ips) { Write-Host ("    https://{0}:5173/" -f $ip) -ForegroundColor White } }
-else { Write-Host "    (사설 IP 없음 — 핫스팟/와이파이 연결을 확인하세요)" -ForegroundColor Yellow }
-Write-Host ""
-Write-Host " PC에서 테스트하려면:  https://localhost:5173/" -ForegroundColor White
-Write-Host " * 인증서 경고가 뜨면 '고급 -> 계속 진행'(아이폰은 '웹사이트 방문')" -ForegroundColor DarkGray
-Write-Host " * 방 만들기 -> 링크/코드를 친구에게 공유하면 같이 플레이!" -ForegroundColor DarkGray
+Write-Host "  이 노트북에서 할 때  →  " -ForegroundColor Green -NoNewline
+Write-Host ("https://localhost:{0}/" -f $port) -ForegroundColor White
+if ($phone) {
+    Write-Host "  폰에서 접속할 때     →  " -ForegroundColor Green -NoNewline
+    Write-Host ("https://{0}:{1}/" -f $phone.Ip, $port) -ForegroundColor White
+} else {
+    Write-Host "  폰에서 접속할 때     →  (연결된 와이파이가 없습니다)" -ForegroundColor Yellow
+}
 Write-Host "==================================================================" -ForegroundColor Green
+Write-Host " * 인증서 경고가 뜨면 '고급 -> 계속 진행' (아이폰은 '웹사이트 방문')" -ForegroundColor DarkGray
+Write-Host " * 폰으로 조종하려면: 노트북 화면에서 폰 연결 코드를 발급 -> 폰에 입력" -ForegroundColor DarkGray
+Write-Host ""
+
+Write-Host "웹 서버를 시작합니다... (이 창을 닫거나 Ctrl+C 를 누르면 종료)" -ForegroundColor DarkGray
 Write-Host ""
 
 # 2) 웹 서버(Vite)를 이 창에서 직접 실행 (node 로 vite 실행 → 실행정책 영향 안 받음)
+#    --strictPort  : 위에서 고른 포트를 못 쓰면 조용히 옮기지 말고 바로 실패해라.
+#                    (안내문과 실제 주소가 어긋나는 게 제일 헷갈린다)
+#    --logLevel warn: Vite 가 자기 주소 목록(가상 어댑터까지 7~8줄)을 또 뿌리는 걸 막는다.
+#                    위에 두 줄만 남기려는 게 목적. 오류·경고는 그대로 보인다.
 Set-Location $client
-& $node "node_modules/vite/bin/vite.js"
+& $node "node_modules/vite/bin/vite.js" --port $port --strictPort --logLevel warn
