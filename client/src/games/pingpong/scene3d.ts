@@ -19,6 +19,7 @@ import {
   posToZ,
   viewerDepth,
   xToWorld,
+  type Fault,
 } from './court'
 
 /**
@@ -34,6 +35,8 @@ import {
  *    항상 또렷하게 보이는 게 중요하다. 셰도우맵의 얼룩·바이어스 문제도 없다.
  *  - 2인 대결은 "월드를 뒤집는" 게 아니라 반대편에 카메라를 하나 더 둔다.
  *    테이블이 대칭이라 카메라만 바꾸면 각자의 1인칭이 된다.
+ *  - 선수는 양쪽 다 서비스 마스코트(makeMascot). 자기 몸은 자기 시점에서 숨기므로
+ *    화면에는 늘 "상대 마스코트"만 보인다. 애니메이션은 전부 프로시저럴이다.
  */
 
 /* ── 연출 튜닝 값 (여기만 만지면 됨) ──
@@ -62,6 +65,12 @@ export interface FrameState {
   ballX: number
   ballSmash: boolean
   ballHit: boolean
+  /** 아웃·네트로 죽은 공 (아무도 못 침) */
+  ballFault: Fault
+  /** 실패 궤적의 시작 prog */
+  ballFaultFrom: number
+  /** 실점 확정 후 떨어진 시간(초). 죽은 공을 바닥으로 내려앉힌다. */
+  ballFall: number
   p1X: number
   p2X: number
   /** 0=평소, 1=방금 휘둘렀음 */
@@ -202,45 +211,39 @@ function floorTexture() {
 }
 
 /* ============================================================
-   라켓 (블레이드 + 손잡이 + 팔) · 사람 피겨
+   라켓 (블레이드 + 손잡이) · 마스코트 피겨
    ============================================================ */
 
 interface Paddle {
   group: THREE.Group
-  /** 팔 — 먼 쪽 시점에서만 보여준다 (가까이선 너무 커서 테이블에 누운 것처럼 보임) */
-  arm: THREE.Mesh
   /** 네트를 향하는 방향: P1 = -1(-z 로 친다) · P2 = +1 */
   facing: -1 | 1
   baseZ: number
 }
 
+/**
+ * 1인칭으로 보이는 "내 라켓". 상대 라켓은 마스코트가 손에 들고 있으므로
+ * prepare() 가 자기 시점에서만 켠다 (안 그러면 상대편에 라켓이 두 개 보인다).
+ */
 function makePaddle(color: number, facing: -1 | 1, baseZ: number, mats: MatBag): Paddle {
   const group = new THREE.Group()
 
   // 블레이드 — 얇은 원판. 기본 원기둥은 y축이라 X로 90° 눕혀 네트를 마주보게.
-  const blade = new THREE.Mesh(new THREE.CylinderGeometry(0.077, 0.077, 0.009, 28), mats.rubber(color))
+  const blade = new THREE.Mesh(mats.geo(new THREE.CylinderGeometry(0.077, 0.077, 0.009, 28)), mats.rubber(color))
   blade.rotation.x = Math.PI / 2
   group.add(blade)
 
   // 테두리(스펀지 옆면)
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.077, 0.006, 8, 28), mats.wood)
+  const rim = new THREE.Mesh(mats.geo(new THREE.TorusGeometry(0.077, 0.006, 8, 28)), mats.wood)
   group.add(rim)
 
   // 손잡이 — 블레이드 아래로
-  const handle = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.1, 0.019), mats.wood)
+  const handle = new THREE.Mesh(mats.geo(new THREE.BoxGeometry(0.028, 0.1, 0.019)), mats.wood)
   handle.position.set(0, -0.12, 0)
   group.add(handle)
 
-  // 팔 — 손잡이에서 "플레이어 쪽(네트 반대)"으로 뻗어 몸과 이어 보이게 한다.
-  //  네트 쪽으로 뻗으면 테이블 판을 뚫으므로 방향은 facing 으로 뒤집는다.
-  //  가까운 쪽 시점에서는 카메라와 너무 가까워 화면을 덮으므로 prepare() 에서 숨긴다.
-  const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.032, 0.28, 4, 10), mats.skin)
-  arm.position.set(0.02, -0.04, facing * -0.17)
-  arm.rotation.x = facing * -1.45
-  group.add(arm)
-
   group.position.set(0, PADDLE_Y, baseZ)
-  return { group, arm, facing, baseZ }
+  return { group, facing, baseZ }
 }
 
 /** 라켓 자세: 좌우 추적 + 스윙(휘두른 뒤 따라나가며 준비자세로 복귀) */
@@ -259,40 +262,259 @@ function poseP(p: Paddle, xNorm: number, swing: number) {
   g.rotation.z = f * lerp(-0.5, -0.15, t)
 }
 
-function makePlayer(color: number, z: number, facing: -1 | 1, mats: MatBag): THREE.Group {
-  const g = new THREE.Group()
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.19, 0.44, 4, 14), mats.shirt(color))
-  torso.position.y = 1.14
-  g.add(torso)
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.115, 20, 14), mats.skin)
-  head.position.y = 1.56
-  g.add(head)
-  // 다리 두 짝
+/* ── 마스코트 몸 색 (브랜드 고정 — 진영과 무관) ──
+   두 선수 다 같은 마스코트라 P1/P2 구분은 accent(머리띠·손목밴드·라켓 고무)로만 한다. */
+const FUR = 0xf4ce5e // 버터
+const BELLY = 0xfbe7a8
+const NOSE = 0x6b4a2b
+const CHEEK = 0xf0a98c
+const EYE = 0x241c14
+
+/* ── 덩치 ──
+   makeMascot 안의 치수는 "키 1.6m" 기준으로 짜여 있고, 여기서 한 번에 줄인다.
+   머리가 커서 사람 선수와 키가 같아도 화면에선 훨씬 크게 읽히기 때문.
+   0.80 = 키 1.28m, 화면 세로 31.5% · 가로 34.1% (1.0 일 때 39.9% · 49.4%).
+   ★ 더 줄이려면 0.75 까지가 한계다. 그 아래로는 어깨가 상판(0.76m)까지 내려와
+     라켓이 테이블 뒤로 잠긴다. 바꾸면 MASCOT_BACK 과 팔 각도도 같이 봐야 한다. */
+const MASCOT_SCALE = 0.8
+/** 코트 끝에서 얼마나 물러나 서는가 (작아진 만큼 살짝 뒤로 → 시선각이 낮아져 덜 가림) */
+const MASCOT_BACK = 0.66
+
+/* ── 오른팔 자세 (라디안) ──
+   팔이 짧고 머리가 커서 각도를 아무렇게나 잡으면 라켓이 머리·몸통을 뚫거나
+   상판에 가려 안 보인다. 아래 값은 "타구면이 네트를 보고, 스윙 내내 몸에서
+   최소 0.2m 떨어져 있고, 카메라에서 상판 위로 보이는" 범위에서 고른 것이다.
+     대기  → 라켓을 가슴 앞으로 (타구면 0° = 네트 정면)
+     팔로스루 → 어깨 높이까지 쓸어올리며 면이 감김 (76°, 이동 0.27m) */
+const WRIST_X = 1.0 // 손목 — 팔보다 라켓을 세워 쥔다
+const ARM_REST_X = -1.0
+const ARM_REST_Z = 0
+const ARM_HIT_X = -2.1
+const ARM_HIT_Y = 0.1
+const ARM_HIT_Z = 0.85
+
+interface Mascot {
+  /** 씬에 붙는 루트 — 좌우 이동 + 어느 쪽을 보는지 */
+  root: THREE.Group
+  /** 보빙·젖힘이 걸리는 안쪽 그룹. 마스코트 로컬 프레임이라 facing 부호를 안 따져도 된다. */
+  body: THREE.Group
+  /** 라켓 든 오른팔 — 어깨가 피벗 */
+  arm: THREE.Group
+  /** 귀 피벗 ×2 (구를 제자리에서 돌리면 안 보이므로 머리 옆에 피벗을 따로 둔다) */
+  ears: THREE.Group[]
+  facing: -1 | 1
+}
+
+/**
+ * 서비스 마스코트 — 라이언풍(갈기 없는 순한 사자), 버터색.
+ * -------------------------------------------------------------
+ * 외부 모델·이미지 없이 구·캡슐·토러스만으로 조립한다(CLAUDE.md 에셋 규칙).
+ * 파츠: 큰 머리 · 동그란 귀 · 점 눈 · 갈색 코 · 발그레한 볼 · 짧고 뭉툭한 팔다리.
+ *
+ * 치수 메모: 아래 좌표는 전부 "키 1.6m" 기준이고, 최종 크기는 MASCOT_SCALE 로
+ * 한 번에 줄인다. 시안(mascot-preview.jsx)은 자유롭게 선 포즈라 어깨가 키의
+ * 0.41 배까지 내려와 있는데, 그대로 두면 어깨·손이 상판(y=0.76) 아래로 잠겨
+ * 라켓이 테이블에 가려진다. 그래서 어깨만 몸통 위쪽(y=1.0)으로 올리고
+ * 나머지 비율·색은 시안을 따랐다. 카메라에서 마스코트가 선 z 지점은 y≈0.6 아래가
+ * 상판에 가리므로, 머리·상체·라켓이 모두 그 위에 오게 잡았다.
+ */
+function makeMascot(accentColor: number, z: number, facing: -1 | 1, mats: MatBag): Mascot {
+  const root = new THREE.Group()
+  const body = new THREE.Group()
+  root.add(body)
+
+  const g = mats.geo
+  const accent = mats.accent(accentColor)
+
+  /* ── 몸통 · 배 ── */
+  const torso = new THREE.Mesh(g(new THREE.SphereGeometry(0.35, 20, 14)), mats.fur)
+  torso.scale.set(1.06, 0.96, 0.98)
+  torso.position.y = 0.7
+  body.add(torso)
+
+  const belly = new THREE.Mesh(g(new THREE.SphereGeometry(0.225, 16, 10)), mats.belly)
+  belly.scale.set(0.94, 1, 0.48)
+  belly.position.set(0, 0.66, 0.235)
+  body.add(belly)
+
+  /* ── 다리 · 발 (짧고 뭉툭. 대부분 테이블에 가리지만 실루엣용으로 둔다) ── */
+  const legGeo = g(new THREE.CapsuleGeometry(0.08, 0.16, 3, 8))
+  const footGeo = g(new THREE.SphereGeometry(0.105, 10, 8))
   for (const s of [-1, 1]) {
-    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.072, 0.5, 4, 10), mats.pants)
-    leg.position.set(s * 0.1, 0.56, 0)
-    g.add(leg)
+    const leg = new THREE.Mesh(legGeo, mats.fur)
+    leg.position.set(s * 0.145, 0.22, 0)
+    body.add(leg)
+    const foot = new THREE.Mesh(footGeo, mats.fur)
+    foot.scale.set(1.1, 0.62, 1.45)
+    foot.position.set(s * 0.145, 0.065, 0.05)
+    body.add(foot)
   }
-  // 라켓 안 든 팔 (균형용)
-  const freeArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.045, 0.32, 4, 10), mats.skin)
-  freeArm.position.set(-0.23, 1.08, 0.04)
-  freeArm.rotation.z = 0.16
-  g.add(freeArm)
-  g.position.set(0, 0, z)
-  // 상대를 바라보게
-  g.rotation.y = facing < 0 ? Math.PI : 0
-  return g
+
+  /* ── 머리 (귀여움의 핵심 — 크게) ── */
+  const head = new THREE.Mesh(g(new THREE.SphereGeometry(0.36, 24, 16)), mats.fur)
+  head.scale.set(1.02, 0.97, 0.99)
+  head.position.y = 1.25
+  body.add(head)
+
+  const muzzle = new THREE.Mesh(g(new THREE.SphereGeometry(0.17, 16, 10)), mats.belly)
+  muzzle.scale.set(1.15, 0.82, 0.7)
+  muzzle.position.set(0, 1.15, 0.25)
+  body.add(muzzle)
+
+  const nose = new THREE.Mesh(g(new THREE.SphereGeometry(0.05, 10, 8)), mats.nose)
+  nose.scale.set(1.25, 0.85, 0.85)
+  nose.position.set(0, 1.17, 0.385)
+  body.add(nose)
+
+  /* 점 눈 + 하이라이트 · 발그레한 볼 (좌우 같은 지오메트리 재사용) */
+  const eyeGeo = g(new THREE.SphereGeometry(0.041, 10, 8))
+  const glintGeo = g(new THREE.SphereGeometry(0.013, 6, 5))
+  const cheekGeo = g(new THREE.SphereGeometry(0.085, 10, 8))
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Mesh(eyeGeo, mats.eye)
+    eye.position.set(s * 0.13, 1.27, 0.315)
+    body.add(eye)
+    const glint = new THREE.Mesh(glintGeo, mats.glint)
+    glint.position.set(s * 0.12, 1.29, 0.35)
+    body.add(glint)
+    const cheek = new THREE.Mesh(cheekGeo, mats.cheek)
+    cheek.scale.set(1, 0.85, 0.7)
+    cheek.position.set(s * 0.22, 1.12, 0.255)
+    body.add(cheek)
+  }
+
+  /* ── 귀 (동그랗고 작게, 갈기 없음) ── */
+  const earGeo = g(new THREE.SphereGeometry(0.105, 12, 8))
+  const earInGeo = g(new THREE.SphereGeometry(0.057, 8, 6))
+  const ears: THREE.Group[] = []
+  for (const s of [-1, 1]) {
+    const pivot = new THREE.Group()
+    pivot.position.set(s * 0.2, 1.36, -0.01)
+    body.add(pivot)
+    const ear = new THREE.Mesh(earGeo, mats.fur)
+    ear.scale.set(1, 1, 0.6)
+    ear.position.set(s * 0.045, 0.13, 0)
+    pivot.add(ear)
+    const inner = new THREE.Mesh(earInGeo, mats.cheek)
+    inner.scale.set(1, 1, 0.5)
+    inner.position.set(s * 0.045, 0.125, 0.048)
+    pivot.add(inner)
+    ears.push(pivot)
+  }
+
+  /* ── 머리띠 (진영색) — 토러스는 xy 평면이라 X로 눕혀 머리를 두른다 ── */
+  const band = new THREE.Mesh(g(new THREE.TorusGeometry(0.325, 0.03, 6, 20)), accent)
+  band.rotation.x = Math.PI / 2
+  band.scale.set(1.02, 0.99, 1) // 회전 전 기준: y 가 앞뒤(깊이)
+  band.position.y = 1.4
+  body.add(band)
+
+  /* ── 팔 (짧고 뭉툭) + 손목밴드(진영색). 좌우가 같은 부품이라 지오메트리 공유 ── */
+  const upperGeo = g(new THREE.CapsuleGeometry(0.075, 0.22, 3, 8))
+  const pawGeo = g(new THREE.SphereGeometry(0.085, 10, 8))
+  const cuffGeo = g(new THREE.TorusGeometry(0.075, 0.022, 5, 12))
+  /** 어깨에 매달린 팔 한 짝 (윗팔 + 손 + 손목밴드) */
+  const mkArm = (side: -1 | 1) => {
+    const a = new THREE.Group()
+    a.position.set(side * 0.34, 1.0, 0.02)
+    body.add(a)
+    const upper = new THREE.Mesh(upperGeo, mats.fur)
+    upper.position.y = -0.16
+    a.add(upper)
+    const paw = new THREE.Mesh(pawGeo, mats.fur)
+    paw.position.y = -0.31
+    a.add(paw)
+    const cuff = new THREE.Mesh(cuffGeo, accent)
+    cuff.rotation.x = Math.PI / 2
+    cuff.position.y = -0.255
+    a.add(cuff)
+    return a
+  }
+
+  // 왼팔 — 고정(균형용), 바깥으로 살짝 벌림
+  const leftArm = mkArm(-1)
+  leftArm.rotation.set(-0.3, 0, -0.26)
+
+  // 오른팔 — 스윙용. 라켓을 쥔다.
+  const arm = mkArm(1)
+  arm.rotation.set(ARM_REST_X, 0, ARM_REST_Z)
+
+  /* 라켓 — 치수·재질을 makePaddle 과 맞춰 "같은 라켓"으로 보이게 한다.
+     grip 원점 = 손. 라켓은 팔을 이어받아 -y(팔이 뻗은 쪽)로 더 나간다.
+     grip.rotation 은 손목 각도라, 팔이 휘두르면 라켓이 통째로 따라 돈다. */
+  const grip = new THREE.Group()
+  grip.position.set(0, -0.31, 0.02)
+  grip.rotation.set(WRIST_X, 0, 0)
+  arm.add(grip)
+  const handle = new THREE.Mesh(g(new THREE.BoxGeometry(0.026, 0.095, 0.018)), mats.wood)
+  handle.position.y = 0.045 // 주먹 안
+  grip.add(handle)
+  // 블레이드 — makePaddle 과 같은 얇은 원판. X로 90° 눕혀 타구면이 네트를 보게.
+  const blade = new THREE.Mesh(g(new THREE.CylinderGeometry(0.077, 0.077, 0.009, 20)), mats.rubber(accentColor))
+  blade.rotation.x = Math.PI / 2
+  blade.position.y = 0.16
+  grip.add(blade)
+  const rim = new THREE.Mesh(g(new THREE.TorusGeometry(0.077, 0.0055, 5, 20)), mats.wood)
+  rim.position.y = 0.16
+  grip.add(rim)
+
+  root.position.set(0, 0, z)
+  root.rotation.y = facing < 0 ? Math.PI : 0 // 상대를 바라보게
+  root.scale.setScalar(MASCOT_SCALE) // 덩치는 여기서 한 번에 (poseMascot 의 body.scale 과 안 겹친다)
+  return { root, body, arm, ears, facing }
+}
+
+/**
+ * 마스코트 자세 — 전부 프로시저럴(position/rotation 직접 보간).
+ * AnimationMixer·스켈레탈 없음. FrameState 신호만 쓴다.
+ *   xNorm 공의 좌우(0~1) · swing 1=방금 휘두름→0 · react 강타 반응 0~1 · t 초 시계
+ */
+function poseMascot(m: Mascot, xNorm: number, swing: number, react: number, t: number) {
+  // 좌우 추적 — 공을 살짝만 따라간다 (기존 선수 피겨와 같은 감쇠 0.55)
+  const x = xToWorld(lerp(0.5, xNorm, 0.55))
+  m.root.position.x = x
+  // 남은 거리만큼 몸을 튼다. body 는 로컬 프레임이라 facing 을 곱해 좌우를 맞춘다.
+  m.body.rotation.y = clamp(m.facing * (xToWorld(xNorm) - x) * 0.5, -0.3, 0.3)
+
+  // idle 보빙 + 강타 움찔 (뒤로 젖히며 살짝 움츠림)
+  m.body.position.y = Math.sin(t * 2.1) * 0.018
+  m.body.rotation.x = -0.16 * react
+  m.body.scale.set(1 + 0.03 * react, 1 - 0.05 * react, 1 + 0.03 * react)
+
+  // 귀 까딱 — 강타 땐 쫑긋
+  const flick = Math.sin(t * 2.1 + 0.6) * 0.09 + react * 0.25
+  m.ears[0].rotation.z = flick
+  m.ears[1].rotation.z = -flick
+
+  // 스윙 — poseP 와 같은 곡선. st: 0=타격 순간 → 1=대기 복귀
+  const st = easeOut(1 - clamp(swing, 0, 1))
+  m.arm.rotation.x = lerp(ARM_HIT_X, ARM_REST_X, st)
+  m.arm.rotation.y = lerp(ARM_HIT_Y, 0, st)
+  m.arm.rotation.z = lerp(ARM_HIT_Z, ARM_REST_Z, st)
+
+  // TODO(득점 세리머니): FrameState 에 득점 신호가 없어 이번 범위 밖.
+  //   PingPong.tsx 가 celebrate(0→1) 같은 신호를 넘겨주면 여기서 점프·만세를
+  //   같은 방식(프로시저럴)으로 붙인다.
 }
 
 /* ============================================================
    재질 묶음 — dispose 를 위해 만든 것을 모두 기억해 둔다
    ============================================================ */
 interface MatBag {
+  /** 색마다 새로 만든다 (라켓 고무 = 진영색) */
   rubber(color: number): THREE.Material
-  shirt(color: number): THREE.Material
+  /** 진영색 — 머리띠·손목밴드 */
+  accent(color: number): THREE.Material
   wood: THREE.Material
-  skin: THREE.Material
-  pants: THREE.Material
+  /* 마스코트 몸 색 (양쪽 공용) */
+  fur: THREE.Material
+  belly: THREE.Material
+  nose: THREE.Material
+  cheek: THREE.Material
+  eye: THREE.Material
+  glint: THREE.Material
+  /** 지오메트리를 dispose 목록에 등록한다 (createScene 의 keepG) */
+  geo<T extends THREE.BufferGeometry>(g: T): T
 }
 
 export interface PingPongScene {
@@ -326,12 +548,18 @@ export function createScene(canvas: HTMLCanvasElement): PingPongScene {
   texFloor.wrapS = texFloor.wrapT = THREE.RepeatWrapping
   texFloor.repeat.set(3, 3)
 
+  // 전부 MeshStandardMaterial — 기존 조명(Hemisphere + key + rim)에 그대로 물린다
   const mats: MatBag = {
     rubber: (color) => keepM(new THREE.MeshStandardMaterial({ color, roughness: 0.82, metalness: 0.02 })),
-    shirt: (color) => keepM(new THREE.MeshStandardMaterial({ color, roughness: 0.72 })),
+    accent: (color) => keepM(new THREE.MeshStandardMaterial({ color, roughness: 0.6 })),
     wood: keepM(new THREE.MeshStandardMaterial({ color: 0xb98a55, roughness: 0.68 })),
-    skin: keepM(new THREE.MeshStandardMaterial({ color: 0xe8b795, roughness: 0.68 })),
-    pants: keepM(new THREE.MeshStandardMaterial({ color: 0x2a3242, roughness: 0.8 })),
+    fur: keepM(new THREE.MeshStandardMaterial({ color: FUR, roughness: 0.78 })),
+    belly: keepM(new THREE.MeshStandardMaterial({ color: BELLY, roughness: 0.82 })),
+    nose: keepM(new THREE.MeshStandardMaterial({ color: NOSE, roughness: 0.5 })),
+    cheek: keepM(new THREE.MeshStandardMaterial({ color: CHEEK, roughness: 0.85 })),
+    eye: keepM(new THREE.MeshStandardMaterial({ color: EYE, roughness: 0.35 })),
+    glint: keepM(new THREE.MeshStandardMaterial({ color: 0xfdfdf6, roughness: 0.4 })),
+    geo: keepG,
   }
 
   /* ── 조명 ── */
@@ -415,15 +643,17 @@ export function createScene(canvas: HTMLCanvasElement): PingPongScene {
     scene.add(post)
   }
 
-  /* ── 선수 · 라켓 ── */
+  /* ── 선수(마스코트) · 라켓 ──
+     양쪽 다 같은 마스코트라 몸 색으로는 진영을 못 가린다.
+     기존 P1 파랑 / P2 빨강을 accent(머리띠·손목밴드·라켓 고무)로 재사용한다. */
   const P1_COLOR = 0x2b8fe0 // 가까운쪽(P1) 파랑 — 기존 2D 색 유지
   const P2_COLOR = 0xe2513c // 먼쪽(P2) 빨강
   const p1Paddle = makePaddle(P1_COLOR, -1, posToZ(IDEAL1), mats)
   const p2Paddle = makePaddle(P2_COLOR, 1, posToZ(IDEAL2), mats)
   scene.add(p1Paddle.group, p2Paddle.group)
-  const p1Body = makePlayer(P1_COLOR, NEAR_Z + 0.62, -1, mats)
-  const p2Body = makePlayer(P2_COLOR, FAR_Z - 0.62, 1, mats)
-  scene.add(p1Body, p2Body)
+  const p1Mascot = makeMascot(P1_COLOR, NEAR_Z + MASCOT_BACK, -1, mats)
+  const p2Mascot = makeMascot(P2_COLOR, FAR_Z - MASCOT_BACK, 1, mats)
+  scene.add(p1Mascot.root, p2Mascot.root)
 
   /* ── 가짜 그림자 (바닥/테이블에 눕힌 그라디언트 판) ── */
   const blobGeo = keepG(new THREE.PlaneGeometry(1, 1))
@@ -446,10 +676,12 @@ export function createScene(canvas: HTMLCanvasElement): PingPongScene {
   const ballShadow = mkBlob(0.85)
   const p1Shadow = mkBlob(0.5)
   const p2Shadow = mkBlob(0.5)
-  p1Shadow.scale.set(0.9, 0.9, 1)
-  p1Shadow.position.set(0, 0.004, NEAR_Z + 0.62)
-  p2Shadow.scale.set(0.9, 0.9, 1)
-  p2Shadow.position.set(0, 0.004, FAR_Z - 0.62)
+  // 마스코트 발밑 그림자 — 덩치·위치를 따라간다
+  const mascotBlob = 0.9 * MASCOT_SCALE
+  p1Shadow.scale.set(mascotBlob, mascotBlob, 1)
+  p1Shadow.position.set(0, 0.004, NEAR_Z + MASCOT_BACK)
+  p2Shadow.scale.set(mascotBlob, mascotBlob, 1)
+  p2Shadow.position.set(0, 0.004, FAR_Z - MASCOT_BACK)
 
   /* ── 공 + 스매시 잔상 ── */
   const ballGeo = keepG(new THREE.SphereGeometry(BALL_R, 22, 16))
@@ -507,18 +739,23 @@ export function createScene(canvas: HTMLCanvasElement): PingPongScene {
      프레임 갱신
      ============================================================ */
   function update(s: FrameState) {
-    const prog = flightProgress(s.ballPos, s.ballDir)
+    const prog = flightProgress(s.ballPos, s.ballDir, s.ballFault)
     const bx = xToWorld(s.ballX)
     const bz = posToZ(s.ballPos)
-    const by = ballY(prog, s.ballSmash)
+    // 죽은 공은 그 자리에서 자유낙하 (테이블 위면 상판에, 밖이면 바닥에 얹힌다)
+    const overTop = Math.abs(bz) <= TABLE_LEN / 2 && Math.abs(bx) <= TABLE_W / 2
+    const restY = (overTop ? TABLE_H : 0) + BALL_R
+    const by = Math.max(
+      restY,
+      ballY(prog, s.ballSmash, s.ballFault, s.ballFaultFrom) - 4.9 * s.ballFall * s.ballFall,
+    )
     ball.position.set(bx, by, bz)
     // 굴러가는 느낌 (진행 방향으로 회전)
     ball.rotation.x += s.ballDir * 0.42
     ball.rotation.y += 0.12
 
     // 공 그림자 — 테이블 위면 상판에, 코트를 벗어나면 바닥에 떨어진다.
-    const overTable = Math.abs(bz) <= TABLE_LEN / 2 && Math.abs(bx) <= TABLE_W / 2
-    const groundY = overTable ? TABLE_H + 0.003 : 0.006
+    const groundY = overTop ? TABLE_H + 0.003 : 0.006
     const height = Math.max(0, by - groundY)
     ballShadow.position.set(bx, groundY, bz)
     // 높이 오를수록 크고 옅게 → 공중에 떠 있음이 읽힌다
@@ -527,15 +764,17 @@ export function createScene(canvas: HTMLCanvasElement): PingPongScene {
     const sm = ballShadow.material as THREE.MeshBasicMaterial
     sm.opacity = clamp(0.9 - height * 0.75, 0.14, 0.9)
 
-    // 라켓
+    // 라켓 (1인칭으로 보이는 내 라켓)
     poseP(p1Paddle, s.p1X, s.p1Swing)
     poseP(p2Paddle, s.p2X, s.p2Swing)
 
-    // 선수 몸통도 공을 좌우로 따라간다 (살짝만)
-    p1Body.position.x = xToWorld(lerp(0.5, s.p1X, 0.55))
-    p2Body.position.x = xToWorld(lerp(0.5, s.p2X, 0.55))
-    p1Shadow.position.x = p1Body.position.x
-    p2Shadow.position.x = p2Body.position.x
+    // 마스코트 — 좌우 추적 · 스윙 · 보빙 · 강타 반응
+    const t = performance.now() / 1000
+    const react = clamp(s.shake * (s.ballSmash ? 1 : 0.55), 0, 1)
+    poseMascot(p1Mascot, s.p1X, s.p1Swing, react, t)
+    poseMascot(p2Mascot, s.p2X, s.p2Swing, react, t)
+    p1Shadow.position.x = p1Mascot.root.position.x
+    p2Shadow.position.x = p2Mascot.root.position.x
 
     // 스매시 잔상
     for (let i = history.length - 1; i > 0; i--) history[i].copy(history[i - 1])
@@ -563,21 +802,22 @@ export function createScene(canvas: HTMLCanvasElement): PingPongScene {
 
   /**
    * 이 시점에서만 달라지는 것들을 세팅.
-   *  - 내 몸은 숨긴다 (카메라가 어깨 뒤라 몸통이 화면을 가림 → 라켓/팔만 보이게)
+   *  - 내 몸은 숨긴다 (카메라가 어깨 뒤라 몸통이 화면을 가림) → 화면엔 늘 상대 마스코트만
+   *  - 라켓은 내 것만 그린다 (상대 라켓은 상대 마스코트가 손에 들고 있다)
    *  - 타이밍 링은 "지금 받는 사람" 화면에만 띄운다
    */
   function prepare(viewer: Viewer, s: FrameState) {
-    p1Body.visible = viewer !== 1
-    p2Body.visible = viewer !== 2
+    p1Mascot.root.visible = viewer !== 1
+    p2Mascot.root.visible = viewer !== 2
     p1Shadow.visible = viewer !== 1
     p2Shadow.visible = viewer !== 2
-    // 내 팔은 숨긴다 — 카메라 바로 앞이라 화면을 덮어버린다 (원본 2D 도 라켓만 그렸다)
-    p1Paddle.arm.visible = viewer !== 1
-    p2Paddle.arm.visible = viewer !== 2
+    p1Paddle.group.visible = viewer === 1
+    p2Paddle.group.visible = viewer === 2
 
     const dv = viewerDepth(s.ballPos, viewer)
     const incoming = viewer === 1 ? s.ballDir > 0 : s.ballDir < 0
-    const show = s.playing && incoming && !s.ballHit && dv > W1_LO - 0.14
+    // 죽은 공엔 링을 띄우지 않는다 — 칠 수 없는 공에 타이밍을 재게 하면 안 된다
+    const show = s.playing && incoming && !s.ballHit && !s.ballFault && dv > W1_LO - 0.14
     ring.visible = show
     if (show) {
       const d = Math.abs(dv - IDEAL1)

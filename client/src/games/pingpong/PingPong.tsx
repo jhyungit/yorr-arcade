@@ -12,12 +12,15 @@ import { socket } from '../../net/socket'
 import { feedbackShake, feedbackThrow, unlockAudio } from '../../lib/feedback'
 import { createScene, type FrameState, type PingPongScene } from './scene3d'
 import {
+  FAULT_BAND,
   GOOD_D,
   IDEAL1,
   IDEAL2,
   MISS1,
   MISS2,
+  NET_HIT_PROG,
   NORMAL_SPEED,
+  OUT_END_PROG,
   PERFECT_D,
   SMASH_SPEED,
   W1_HI,
@@ -26,6 +29,9 @@ import {
   W2_LO,
   WEAK_SPEED,
   WIN_SCORE as WIN,
+  faultOf,
+  flightProgress,
+  type Fault,
 } from './court'
 
 /**
@@ -46,10 +52,9 @@ import {
  *  court.ts 가 pos 에서 계산한다 → 온라인 프로토콜을 그대로 유지할 수 있다.
  */
 
-const BASE_MISS = 0.12
-const SMASH_MISS = 0.62
 const POINT_COUNTDOWN_MS = 2600 // 득점 후: 플래시 → 3·2·1 → 서브 (준비 시간)
 const SWING_MS = 260 // 라켓 스윙 연출 길이
+const SWING_LOCK_MS = 260 // 헛스윙 후 다시 휘두르기까지 (키보드·탭 연타 방지, 폰 스윙 제외)
 const SHAKE_MS = 190 // 스매시 화면 흔들림 길이
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
@@ -57,6 +62,36 @@ const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
 const rand = (a: number, b: number) => a + Math.random() * (b - a)
 
 type Mode = 'solo' | 'duo' | 'online-host' | 'online-guest'
+type Difficulty = 'easy' | 'normal' | 'hard'
+
+/**
+ * 봇 실력 (solo 전용)
+ * -------------------------------------------------------------
+ * 난이도의 핵심 손잡이는 miss 확률이 아니라 smashBack 이다.
+ * 봇이 스매시로 받아치면 공이 1.0 → 1.95 pos/s 로 빨라지고, 내 판정창이
+ * 340ms → 174ms 로 줄어든다. 봇이 공격을 안 하면(smashBack 0) 내가 점수를
+ * 잃을 길이 "내 타이밍 실수"뿐이라, 봇 명중률만 올려봐야 랠리만 길어지고
+ * 승부는 안 팽팽해진다.
+ */
+interface BotSkill {
+  /** 평범한 공을 놓칠 확률 */
+  missNormal: number
+  /** 내 스매시를 놓칠 확률 */
+  missSmash: number
+  /** 랠리가 길어질수록 붙는 가산치 (초조해짐) — 무한 랠리 방지 */
+  ramp: number
+  rampCap: number
+  /** 받아칠 때 스매시로 반격할 확률 */
+  smashBack: number
+  /** 내 타구가 아웃·네트로 죽는 판정 폭 (작을수록 관대) — court.faultOf */
+  band: number
+}
+const BOT: Record<Difficulty, BotSkill> = {
+  easy: { missNormal: 0.11, missSmash: 0.46, ramp: 0.005, rampCap: 0.08, smashBack: 0.05, band: 0.02 },
+  normal: { missNormal: 0.07, missSmash: 0.2, ramp: 0.005, rampCap: 0.08, smashBack: 0.3, band: 0.04 },
+  hard: { missNormal: 0.02, missSmash: 0.14, ramp: 0.005, rampCap: 0.08, smashBack: 0.3, band: 0.05 },
+}
+const DIFF_LABEL: Record<Difficulty, string> = { easy: '쉬움', normal: '보통', hard: '어려움' }
 type Phase = 'ready' | 'playing' | 'point' | 'over'
 type LabelKind = 'smash' | 'nice' | 'ok' | 'miss' | 'good' | 'bad'
 
@@ -69,11 +104,19 @@ interface Ball {
   x: number
   x0: number
   x1: number
+  /** 실패한 타구 — 아무도 못 치고, 갈 데까지 가면 친 사람 실점 */
+  fault: Fault
+  /** 실패 궤적의 시작 prog (친 지점). 안 넣으면 치는 순간 공 높이가 툭 튄다. */
+  faultFrom: number
+  /** 실점 확정 후 공이 떨어진 시간(초). 네트에 걸린 공이 공중에 멈춰 있으면 어색하다. */
+  fall: number
 }
 interface GameState {
   w: number
   h: number
   mode: Mode
+  /** solo 봇 실력 (다른 모드에선 안 쓴다) */
+  diff: Difficulty
   phase: Phase
   s1: number
   s2: number
@@ -106,6 +149,9 @@ interface NetState {
   dir: 1 | -1
   speed: number
   smash: boolean
+  /** 없으면 구버전 호스트 → 정상 타구로 본다 */
+  fault?: Fault
+  faultFrom?: number
   x0: number
   x1: number
   s1: number
@@ -119,7 +165,19 @@ interface NetState {
 }
 
 function newBall(): Ball {
-  return { pos: 0.02, dir: 1, speed: NORMAL_SPEED, smash: false, hit: false, x: 0.5, x0: 0.5, x1: 0.5 }
+  return {
+    pos: 0.02,
+    dir: 1,
+    speed: NORMAL_SPEED,
+    smash: false,
+    hit: false,
+    x: 0.5,
+    x0: 0.5,
+    x1: 0.5,
+    fault: null,
+    faultFrom: 0,
+    fall: 0,
+  }
 }
 
 interface PingPongProps {
@@ -134,6 +192,7 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
     w: 0,
     h: 0,
     mode: 'solo',
+    diff: 'normal',
     phase: 'ready',
     s1: 0,
     s2: 0,
@@ -156,13 +215,19 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
     comboId: 0,
     countdown: 0,
   })
-  const swingRef = useRef<(player: number) => void>(() => {})
-  const startRef = useRef<(mode: Mode) => void>(() => {})
+  const swingRef = useRef<(player: number, motion?: boolean) => void>(() => {})
+  const startRef = useRef<(mode: Mode, diff?: Difficulty) => void>(() => {})
   const startOnlineRef = useRef<(role: 'host' | 'guest') => void>(() => {})
   const labelTimer = useRef<number | null>(null)
 
   const sceneRef = useRef<PingPongScene | null>(null)
-  const [ui, setUi] = useState({ phase: 'ready' as Phase, s1: 0, s2: 0, mode: 'solo' as Mode })
+  const [ui, setUi] = useState({
+    phase: 'ready' as Phase,
+    s1: 0,
+    s2: 0,
+    mode: 'solo' as Mode,
+    diff: 'normal' as Difficulty,
+  })
   const [label, setLabel] = useState<{ text: string; kind: LabelKind } | null>(null)
   const [motionOn, setMotionOn] = useState(false)
   // 득점 후 3·2·1 (3D 캔버스 위에 DOM 으로 얹는다 — 텍스트가 훨씬 선명하다)
@@ -179,21 +244,22 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
   // - online-guest: 로컬 시뮬 대신 서버로 스윙 전송
   // - online-host : 내(호스트=P1) 스윙만. 어떤 키를 눌러도 P1 (상대 라켓 조종 방지)
   // - solo/duo    : player 인자대로 (스페이스=P1, P=P2, 탭은 좌우/전체)
-  const input = useCallback((player: number) => {
+  // motion = 폰을 실제로 휘두른 입력. 연타 잠금에서 빼준다(아래 swing 주석 참고).
+  const input = useCallback((player: number, motion = false) => {
     const mode = gameRef.current.mode
     if (mode === 'online-guest') {
       socket.emit('pp:swing')
       return
     }
     if (mode === 'online-host') {
-      swingRef.current(1)
+      swingRef.current(1, motion)
       return
     }
-    swingRef.current(player)
+    swingRef.current(player, motion)
   }, [])
 
   const { permission, requestPermission } = useSwing({
-    onSwing: () => input(1),
+    onSwing: () => input(1, true), // 실제 폰 스윙 → 연타 잠금 제외
     enabled: motionOn,
   })
 
@@ -214,7 +280,7 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
     }
     sceneRef.current = scene
 
-    const commit = () => setUi({ phase: g.phase, s1: g.s1, s2: g.s2, mode: g.mode })
+    const commit = () => setUi({ phase: g.phase, s1: g.s1, s2: g.s2, mode: g.mode, diff: g.diff })
     const showLabel = (text: string, kind: LabelKind) => {
       setLabel({ text, kind })
       g.fx = { text, kind, id: ++g.fxId } // 온라인: 상대 화면에도 같은 팝업 표시용
@@ -244,8 +310,10 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
       commit()
     }
 
-    const start = (mode: Mode) => {
+    // diff 생략 시 직전 난이도 유지 ("다시 하기" 용)
+    const start = (mode: Mode, diff: Difficulty = g.diff) => {
       g.mode = mode
+      g.diff = diff
       g.s1 = 0
       g.s2 = 0
       serveTo(1)
@@ -276,6 +344,8 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
       dir: g.ball.dir,
       speed: g.ball.speed,
       smash: g.ball.smash,
+      fault: g.ball.fault,
+      faultFrom: g.ball.faultFrom,
       x0: g.ball.x0,
       x1: g.ball.x1,
       s1: g.s1,
@@ -309,24 +379,69 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
     // 봇(solo, P2) 자동 리턴/미스
     const botTurn = (now: number) => {
       const b = g.ball
+      const skill = BOT[g.diff]
       g.p2SwingAt = now
-      const missChance = b.smash ? SMASH_MISS : BASE_MISS + Math.min(0.16, g.rally * 0.012)
+      const missChance = b.smash
+        ? skill.missSmash
+        : skill.missNormal + Math.min(skill.rampCap, g.rally * skill.ramp)
       if (Math.random() < missChance) {
-        scorePoint(1)
+        // 절반은 아예 못 건드리고(즉시 실점), 절반은 건드렸는데 아웃/네트 →
+        // 봇도 사람처럼 실수하는 그림이 나온다.
+        if (Math.random() < 0.5) {
+          scorePoint(1)
+          return
+        }
+        b.dir = 1
+        b.pos = 0
+        b.smash = false
+        b.hit = false
+        b.fault = Math.random() < 0.5 ? 'out' : 'net'
+        b.faultFrom = 0 // 봇은 코트 끝(pos 0)에서 치므로 궤적 시작이 0
+        b.speed = b.fault === 'out' ? NORMAL_SPEED : WEAK_SPEED
+        b.x0 = b.x
+        b.x1 = rand(0.15, 0.85)
         return
       }
+      // 반격 — 난이도가 높을수록 스매시로 되받아친다. 공이 빨라져 내 판정창이 좁아진다.
+      const counter = Math.random() < skill.smashBack
       b.dir = 1
       b.pos = 0
-      b.smash = false
+      b.smash = counter
       b.hit = false
-      b.speed = baseSpeed() * rand(0.95, 1.12)
+      b.speed = counter ? SMASH_SPEED : baseSpeed() * rand(0.95, 1.12)
       b.x0 = b.x
       b.x1 = rand(0.15, 0.85)
+      // 상대 스매시는 흔들림으로 경고만 (섬광은 "내가 쳤다" 신호라 안 쓴다)
+      if (counter) {
+        g.shakeAt = now
+        feedbackShake()
+      }
       g.rally++
     }
 
-    const returnBall = (player: number, d: number, now: number) => {
+    /** early = 아직 올라오는 공을 미리 침(→아웃) / false = 늦게 침(→네트) */
+    const returnBall = (player: number, d: number, early: boolean, now: number) => {
       const b = g.ball
+      // 방향을 상대 쪽으로 튕기고, "이 구간은 아직 안 침"으로 리셋 → 상대가 받아칠 수 있음.
+      // (되받아치기 방지는 dir 가드가 담당: 친 사람은 dir 가 자기 반대라 막힘)
+      b.dir = player === 1 ? -1 : 1
+      b.hit = false
+      b.x0 = b.x
+      b.x1 = rand(0.15, 0.85)
+
+      // 판정창 가장자리 = 공은 맞혔지만 아웃/네트. 라벨은 실제로 나갈 때 띄운다(김 빠지지 않게).
+      // 1인은 난이도별 판정 폭, 2인·온라인은 기본값 (양쪽에 같은 규칙이어야 공평)
+      const fault = faultOf(d, early, g.mode === 'solo' ? BOT[g.diff].band : FAULT_BAND)
+      if (fault) {
+        b.fault = fault
+        b.faultFrom = flightProgress(b.pos, b.dir, fault)
+        b.smash = false
+        b.speed = fault === 'out' ? NORMAL_SPEED : WEAK_SPEED
+        feedbackShake()
+        socket.emit('game:hit', { player, kind: 'ok' })
+        return
+      }
+
       let kind: LabelKind
       if (d <= PERFECT_D) {
         kind = 'smash'
@@ -346,19 +461,29 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
         b.smash = false
         feedbackShake()
       }
-      // 방향을 상대 쪽으로 튕기고, "이 구간은 아직 안 침"으로 리셋 → 상대가 받아칠 수 있음.
-      // (되받아치기 방지는 dir 가드가 담당: 친 사람은 dir 가 자기 반대라 막힘)
-      b.dir = player === 1 ? -1 : 1
-      b.hit = false
-      b.x0 = b.x
-      b.x1 = rand(0.15, 0.85)
       g.rally++
       showLabel(kind === 'smash' ? '스매시! 💥' : kind === 'nice' ? '퍼펙트!' : '굿', kind)
       // 폰 컨트롤러로 "쳤다!" 신호 → 그 폰이 진동/소리
       socket.emit('game:hit', { player, kind })
     }
 
-    const swing = (player: number) => {
+    /** 아웃·네트가 확정됐을 때 — 친 사람이 잃는다 (dir 가 향하는 쪽이 득점) */
+    const faultPoint = () => {
+      const b = g.ball
+      const kind = b.fault
+      scorePoint(b.dir < 0 ? 2 : 1)
+      // scorePoint 가 띄운 일반 라벨을 덮어쓴다 — 왜 졌는지가 더 중요하다
+      showLabel(kind === 'out' ? '아웃! 🚀' : '네트… 🥅', 'bad')
+    }
+
+    /**
+     * motion = 폰을 실제로 휘두른 입력.
+     * 연타 잠금(SWING_LOCK_MS)은 키보드·탭에만 건다. 헛스윙에 아무 대가가 없으면
+     * 마구 눌러 창 안에 반드시 걸리므로 타이밍 게임이 성립하지 않는다.
+     * 폰 스윙을 빼는 이유: 팔을 휘둘러야 해서 이미 물리적으로 연타가 안 되고,
+     * 가속도 오감지가 났을 때 잠기면 정작 칠 때 못 치게 된다.
+     */
+    const swing = (player: number, motion = false) => {
       const now = performance.now()
       unlockAudio()
       if (g.phase === 'ready') return // 시작은 오버레이 버튼으로 모드 선택
@@ -367,14 +492,17 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
         return
       }
       if (g.phase !== 'playing') return
+      if (!motion && now - (player === 1 ? g.p1SwingAt : g.p2SwingAt) < SWING_LOCK_MS) return
       const b = g.ball
+      if (b.fault) return // 이미 아웃·네트로 죽은 공은 아무도 못 친다
       if (player === 1) {
         if (b.dir < 0 || b.hit) return
         g.p1X = b.x
         g.p1SwingAt = now
         if (b.pos < W1_LO) return showLabel('너무 빨라요', 'miss')
         if (b.pos > W1_HI) return showLabel('너무 늦었어요', 'miss')
-        returnBall(1, Math.abs(b.pos - IDEAL1), now)
+        // P1 은 pos 가 커지며 다가온다 → 이상 지점보다 작으면 미리 친 것
+        returnBall(1, Math.abs(b.pos - IDEAL1), b.pos < IDEAL1, now)
       } else {
         if (g.mode !== 'duo' && g.mode !== 'online-host') return // solo 는 봇
         if (b.dir > 0 || b.hit) return
@@ -382,13 +510,16 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
         g.p2SwingAt = now
         if (b.pos > W2_HI) return showLabel('너무 빨라요', 'miss')
         if (b.pos < W2_LO) return showLabel('너무 늦었어요', 'miss')
-        returnBall(2, Math.abs(b.pos - IDEAL2), now)
+        // P2 는 pos 가 작아지며 다가온다 → 이상 지점보다 크면 미리 친 것
+        returnBall(2, Math.abs(b.pos - IDEAL2), b.pos > IDEAL2, now)
       }
     }
     swingRef.current = swing
 
     const update = (now: number, dt: number) => {
       if (g.phase === 'point') {
+        // 실점으로 죽은 공은 그 자리에 떨어뜨린다 (네트에 걸린 공이 떠 있으면 어색)
+        if (g.ball.fault) g.ball.fall = Math.min(1.2, g.ball.fall + dt)
         // 득점 플래시(약 0.8초) 후 3·2·1 카운트다운, 0 되면 서브
         const rem = g.nextServeAt - now
         g.countdown = rem <= 1800 ? Math.max(0, Math.min(3, Math.ceil(rem / 600))) : 0
@@ -398,6 +529,15 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
       if (g.phase !== 'playing') return
       const b = g.ball
       b.pos += b.speed * dt * b.dir
+
+      // 아웃·네트로 죽은 공 — 아무도 못 치고, 갈 데까지 가면 실점 확정
+      if (b.fault) {
+        const fp = flightProgress(b.pos, b.dir, b.fault)
+        b.x = lerp(b.x0, b.x1, Math.min(1, fp))
+        if (fp >= (b.fault === 'net' ? NET_HIT_PROG : OUT_END_PROG)) faultPoint()
+        return
+      }
+
       const prog = b.dir > 0 ? clamp(b.pos, 0, 1) : clamp(1 - b.pos, 0, 1)
       b.x = lerp(b.x0, b.x1, prog)
       if (b.dir > 0) g.p1X = lerp(g.p1X, b.x, 0.12)
@@ -424,6 +564,9 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
         ballX: b.x,
         ballSmash: b.smash,
         ballHit: b.hit,
+        ballFault: b.fault,
+        ballFaultFrom: b.faultFrom,
+        ballFall: b.fall,
         p1X: g.p1X,
         p2X: g.p2X,
         p1Swing: sw(g.p1SwingAt),
@@ -489,6 +632,8 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
           b.pos += b.speed * dt * b.dir
           const prog = b.dir > 0 ? clamp(b.pos, 0, 1) : clamp(1 - b.pos, 0, 1)
           b.x = lerp(b.x0, b.x1, prog)
+        } else if (g.phase === 'point' && g.ball.fault) {
+          g.ball.fall = Math.min(1.2, g.ball.fall + dt) // 죽은 공 낙하는 로컬에서
         }
       } else {
         update(now, dt)
@@ -533,7 +678,7 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
   useEffect(() => {
     const onSwing = (p?: { player?: number }) => {
       if (gameRef.current.mode.startsWith('online')) return // 온라인 땐 폰컨트롤러 무시
-      swingRef.current(p?.player ?? 1)
+      swingRef.current(p?.player ?? 1, true) // 폰 컨트롤러 스윙 → 연타 잠금 제외
     }
     socket.on('ctrl:swing', onSwing)
     return () => {
@@ -554,6 +699,9 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
       b.dir = s.dir
       b.speed = s.speed
       b.smash = s.smash
+      if (!b.fault && s.fault) b.fall = 0 // 새로 죽은 공 → 낙하 타이머 초기화
+      b.fault = s.fault ?? null
+      b.faultFrom = s.faultFrom ?? 0
       b.x0 = s.x0
       b.x1 = s.x1
       const changed = g.s1 !== s.s1 || g.s2 !== s.s2 || g.phase !== s.phase
@@ -574,10 +722,12 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
           g.shakeAt = performance.now()
         }
       }
-      if (changed) setUi({ phase: s.phase, s1: s.s1, s2: s.s2, mode: 'online-guest' })
+      if (changed) setUi({ phase: s.phase, s1: s.s1, s2: s.s2, mode: 'online-guest', diff: g.diff })
     }
     const onSwing = () => {
-      if (gameRef.current.mode === 'online-host') swingRef.current(2)
+      // 상대(게스트)가 키보드로 쳤는지 폰으로 휘둘렀는지 알 수 없다 →
+      // 잠갔다가 폰 스윙을 막아버리는 쪽이 더 나쁘므로 잠그지 않는다.
+      if (gameRef.current.mode === 'online-host') swingRef.current(2, true)
     }
     const onLeft = () => setOppLeft(true)
     socket.on('pp:state', onState)
@@ -634,6 +784,8 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
             </span>
           ) : phoneConnected ? (
             <span className="text-xs text-[#49e08a]">📱 폰 연결됨 🟢</span>
+          ) : ui.mode === 'solo' && ui.phase !== 'ready' ? (
+            <span className="label-mono text-white/40">1인 · {DIFF_LABEL[ui.diff]}</span>
           ) : (
             <span className="label-mono text-white/40">PING · PONG</span>
           )}
@@ -730,9 +882,32 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
               날아오는 공을 타이밍 맞춰 받아치기.
               <br />
               정확한 순간 = <b className="text-[#ff7a4d]">스매시!</b>
+              <br />
+              너무 이르면 <b className="text-white/80">아웃</b>, 늦으면{' '}
+              <b className="text-white/80">네트</b>
             </p>
             <div className="flex flex-col gap-3 w-full max-w-xs">
-              <PrimaryButton onClick={() => startRef.current('solo')}>1인 · 봇과 대결</PrimaryButton>
+              {/* 1인 — 난이도를 바로 고른다 (누르는 즉시 시작) */}
+              <div>
+                <div className="label-mono text-white/40 text-center mb-2">1인 · 봇과 대결</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['easy', 'normal', 'hard'] as const).map((d) => (
+                    <button
+                      key={d}
+                      onClick={() => startRef.current('solo', d)}
+                      className={`py-3 rounded-2xl font-bold text-sm active:brightness-95 ${
+                        d === 'normal'
+                          ? 'bg-[#2b8fe0] text-white shadow-lg'
+                          : d === 'easy'
+                            ? 'bg-[#49e08a]/15 border border-[#49e08a]/40 text-[#49e08a]'
+                            : 'bg-[#e2513c]/15 border border-[#e2513c]/40 text-[#e2513c]'
+                      }`}
+                    >
+                      {DIFF_LABEL[d]}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <button
                 onClick={() => startRef.current('duo')}
                 className="px-6 py-3 rounded-2xl bg-white/10 active:bg-white/20 text-white font-bold"

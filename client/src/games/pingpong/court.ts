@@ -41,7 +41,16 @@ export const W2_LO = 1 - W1_HI
 export const W2_HI = 1 - W1_LO
 export const MISS2 = 1 - MISS1
 export const PERFECT_D = 0.06
-export const GOOD_D = 0.16
+export const GOOD_D = 0.1
+
+/* ── 타구 실패 (판정창 가장자리) ──
+   창 안에 들어와 공은 맞혔지만 타이밍이 아슬아슬한 구간.
+     너무 이름(아직 올라오는 공) → 길게 떠서 아웃
+     너무 늦음(이미 떨어진 공)   → 네트에 걸림
+   판정창이 이상 지점 기준 -0.18/+0.16 으로 비대칭이라, 이상 지점이 아니라
+   "창 가장자리에서 안쪽으로 얼마"로 재야 양쪽 띠 폭이 같아진다.
+   0.04 → P1 기준 아웃 0.72~0.76 · 성공 0.76~1.02 · 네트 1.02~1.06 */
+export const FAULT_BAND = 0.04
 
 /* ── 속도 (pos/sec) ── */
 export const NORMAL_SPEED = 1.0
@@ -114,11 +123,46 @@ function arcA(f: Flight): { a: number; b: number } {
 const A_NORMAL = arcA(NORMAL_FLIGHT)
 const A_SMASH = arcA(SMASH_FLIGHT)
 
+/* ============================================================
+   실패한 타구의 궤적
+   ------------------------------------------------------------
+   둘 다 바운스가 없는 단일 포물선이라 위 A/B 구간 로직을 안 탄다.
+   ============================================================ */
+
+/** 타구 실패 — 'out' 길게 떠서 상대 코트 밖 · 'net' 네트에 걸림 */
+export type Fault = 'out' | 'net' | null
+
+/** 네트에 닿는 진행도. prog=0.5 가 네트라 (NET_CROSS_PROG 주석 참고) 여기서 끝난다. */
+export const NET_HIT_PROG = NET_CROSS_PROG
+/** 아웃 공이 바닥에 닿는 진행도 (여기까지 날아간 뒤 실점 처리) */
+export const OUT_END_PROG = 1.5
+
+/* 실패 궤적은 "친 지점(from) → 끝"을 0…1 로 정규화한 t 로 그린다.
+   판정창 가장자리에서 치므로 from 이 0 이 아닌데(아웃은 보통 0.26),
+   prog 를 그대로 쓰면 치는 순간 공 높이가 툭 튄다.
+     아웃: h(0)=LAUNCH · 최고 0.40 (네트를 훌쩍 넘김) · h(1)=-TABLE_H (바닥)
+     네트: h(0)=LAUNCH · 최고 0.165 · h(1)=0.10 → NET_H(0.1525) 에 못 미쳐 걸림 */
+const OUT_A = -2.585
+const OUT_B = 1.705
+const NET_A = -0.218
+const NET_B = 0.198
+
 /**
  * 테이블 면 기준 공 높이(m). prog = 이번 타구의 진행도 (0 = 방금 침, 1 = 상대 도달)
  * 구간 A 는 위로 볼록한 포물선이라 [0, bounceAt] 에서 항상 0 이상 → 테이블을 뚫지 않는다.
+ * fault 가 있으면 바운스 없는 실패 궤적을 쓴다 (아웃은 prog 가 1 을 넘어간다).
+ *  from = 그 타구를 친 시점의 prog (실패 궤적의 시작점)
  */
-export function ballLift(prog: number, smash: boolean): number {
+export function ballLift(prog: number, smash: boolean, fault: Fault = null, from = 0): number {
+  if (fault) {
+    const end = fault === 'out' ? OUT_END_PROG : NET_HIT_PROG
+    const span = end - from
+    const t = span <= 0 ? 1 : (prog - from) / span
+    const u = t < 0 ? 0 : t > 1 ? 1 : t
+    return fault === 'out'
+      ? OUT_A * u * u + OUT_B * u + LAUNCH
+      : NET_A * u * u + NET_B * u + LAUNCH
+  }
   const f = flightOf(smash)
   const p = prog < 0 ? 0 : prog > 1 ? 1 : prog
   if (p <= f.bounceAt) {
@@ -134,17 +178,36 @@ export function ballLift(prog: number, smash: boolean): number {
 }
 
 /** 공의 월드 높이(y) = 테이블 면 + 궤적 높이 */
-export function ballY(prog: number, smash: boolean): number {
-  return TABLE_H + ballLift(prog, smash)
+export function ballY(prog: number, smash: boolean, fault: Fault = null, from = 0): number {
+  return TABLE_H + ballLift(prog, smash, fault, from)
 }
 
 /**
  * 이번 타구의 진행도. 게임 로직의 x 보간과 같은 식이라 좌우/높이가 항상 맞물린다.
  *  dir > 0 (P1 쪽으로 감) → pos 그대로 · dir < 0 → 뒤집어서
+ *  아웃 공만 1 을 넘어 코트 밖까지 나간다.
  */
-export function flightProgress(pos: number, dir: number): number {
+export function flightProgress(pos: number, dir: number, fault: Fault = null): number {
   const v = dir > 0 ? pos : 1 - pos
-  return v < 0 ? 0 : v > 1 ? 1 : v
+  const hi = fault === 'out' ? OUT_END_PROG : 1
+  return v < 0 ? 0 : v > hi ? hi : v
+}
+
+/* 이상 지점에서 창 끝까지의 여유 (P1·P2 뒤집어도 같은 값) */
+const EARLY_MARGIN = IDEAL1 - W1_LO // 0.18
+const LATE_MARGIN = W1_HI - IDEAL1 // 0.16
+
+/**
+ * 타구 판정 — 이상 지점에서 얼마나 벗어났나(d)와 어느 쪽으로 벗어났나(early)로
+ * 성공/아웃/네트를 가른다. 규칙을 여기 모아둬야 P1·P2·봇이 같은 기준을 쓴다.
+ *  early = 아직 올라오는 공을 미리 침 → 길게 떠서 아웃
+ *  late  = 이미 떨어진 공을 늦게 침 → 네트
+ *  band  = 창 가장자리에서 실패로 치는 폭. 1인 모드는 난이도별로 다르게 준다.
+ */
+export function faultOf(d: number, early: boolean, band: number = FAULT_BAND): Fault {
+  const limit = (early ? EARLY_MARGIN : LATE_MARGIN) - band
+  if (d <= limit) return null
+  return early ? 'out' : 'net'
 }
 
 /** 뷰어(1=가까운쪽 P1 시점, 2=먼쪽 P2 시점) 기준 깊이 — 타이밍 링 판정용 */
