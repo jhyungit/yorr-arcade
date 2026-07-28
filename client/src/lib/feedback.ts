@@ -70,3 +70,53 @@ export function feedbackThrow() {
   if (canVibrate && vibrationOn) navigator.vibrate([0, 60, 40, 120])
   beep(660, 120, 0.25)
 }
+
+/* -------------------------------------------------------------
+   주사위 소리
+   실제 주사위 소리는 "음"이 아니라 짧은 소음(noise)이다. 그래서 오실레이터
+   대신 화이트노이즈를 밴드패스로 깎아 쓴다. 부딪힐 때마다 중심 주파수를
+   조금씩 흔들어야 다섯 개가 같은 소리로 들리지 않는다.
+   ------------------------------------------------------------- */
+
+let noiseBuf: AudioBuffer | null = null
+
+function noiseBuffer(ctx: AudioContext) {
+  if (noiseBuf) return noiseBuf
+  const len = Math.floor(ctx.sampleRate * 0.25)
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate)
+  const data = buf.getChannelData(0)
+  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1
+  noiseBuf = buf
+  return buf
+}
+
+/** 노이즈 한 방. freq=밴드패스 중심, ms=길이, vol=세기 */
+function clack(freq: number, ms: number, vol: number, q = 1.6) {
+  if (!audioCtx || !soundOn) return
+  const ctx = audioCtx
+  const src = ctx.createBufferSource()
+  src.buffer = noiseBuffer(ctx)
+  const band = ctx.createBiquadFilter()
+  band.type = 'bandpass'
+  band.frequency.value = freq
+  band.Q.value = q
+  const gain = ctx.createGain()
+  const now = ctx.currentTime
+  gain.gain.setValueAtTime(vol, now)
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + ms / 1000)
+  src.connect(band).connect(gain).connect(ctx.destination)
+  src.start(now)
+  src.stop(now + ms / 1000)
+}
+
+/** 주사위끼리·펠트에 부딪히는 '딱'. strength 0~1 */
+export function feedbackDiceHit(strength: number) {
+  const s = Math.max(0, Math.min(1, strength))
+  clack(1500 + Math.random() * 1700, 45 + s * 35, 0.05 + s * 0.16)
+}
+
+/** 다 굴러 멈췄을 때의 '툭' — 조금 낮고 짧게 */
+export function feedbackDiceLand() {
+  if (canVibrate && vibrationOn) navigator.vibrate(30)
+  clack(760 + Math.random() * 260, 90, 0.13, 1.1)
+}
