@@ -15,18 +15,56 @@
 
 let audioCtx: AudioContext | null = null
 
-// 사용자가 켜고 끌 수 있는 피드백 스위치 (기본 켜짐)
-let vibrationOn = true
-let soundOn = true
+/* 사용자가 켜고 끌 수 있는 피드백 스위치.
+   폰 컨트롤러의 설정(톱니바퀴)에서 바꾸고 localStorage 에 남긴다 —
+   조용한 곳에서 소리를 껐는데 새로고침하면 다시 켜지는 게 제일 짜증난다. */
+const SOUND_KEY = 'yorr.sound'
+const VIBE_KEY = 'yorr.vibe'
+
+/** 저장된 설정 읽기 (없으면 켜짐이 기본) */
+function load(key: string) {
+  try {
+    return localStorage.getItem(key) !== 'off'
+  } catch {
+    return true // 시크릿 모드 등
+  }
+}
+
+let vibrationOn = load(VIBE_KEY)
+let soundOn = load(SOUND_KEY)
+
+function save(key: string, on: boolean) {
+  try {
+    localStorage.setItem(key, on ? 'on' : 'off')
+  } catch {
+    /* 저장 못 해도 이번 세션에는 적용된다 */
+  }
+}
+
 export function setVibrationEnabled(on: boolean) {
   vibrationOn = on
+  save(VIBE_KEY, on)
 }
 export function setSoundEnabled(on: boolean) {
   soundOn = on
+  save(SOUND_KEY, on)
+}
+/** 지금 설정값 (UI 초기 상태를 맞추는 데 쓴다) */
+export function feedbackSettings() {
+  return { sound: soundOn, vibration: vibrationOn }
 }
 
-/** 브라우저가 진동을 지원하는지 (사실상 안드로이드 계열) */
-export const canVibrate = typeof navigator !== 'undefined' && 'vibrate' in navigator
+/**
+ * 브라우저가 진동을 지원하는지.
+ * -------------------------------------------------------------
+ * 상수가 아니라 **함수**여야 한다. 아이폰용 폴리필(ios-vibrator-pro-max)을
+ * 폰 컨트롤러에서 동적 import 하는데, 모듈 로드 시점에 한 번 평가하는 const 로
+ * 두면 그때는 아직 navigator.vibrate 가 없어서 false 로 굳어 버린다.
+ * → 폴리필이 붙은 뒤에도 계속 진동이 무시된다. 호출할 때마다 다시 본다.
+ */
+export function canVibrate() {
+  return typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function'
+}
 
 /** 사용자 제스처(버튼 탭) 안에서 호출해 오디오를 깨운다. iOS 필수. */
 export function unlockAudio() {
@@ -59,15 +97,30 @@ function beep(freq: number, durationMs: number, volume = 0.2) {
   osc.stop(now + durationMs / 1000)
 }
 
+/**
+ * 탭 햅틱 — 폰 컨트롤러에서 주사위를 킵하거나 점수 칸을 고를 때.
+ * -------------------------------------------------------------
+ * 소리는 내지 않는다. 점수 칸을 고르며 여러 번 탭하게 되는데 그때마다
+ * 삑삑거리면 시끄럽다. 손끝 반응만 준다.
+ *
+ * 아이폰: ios-vibrator-pro-max 폴리필이 붙어 있으면 여기서도 진동이 온다.
+ * "사용자 탭 직후 1초" 안에만 허용되는데, 이 함수는 탭 핸들러에서 바로
+ * 부르므로 그 조건에 들어간다. (내 차례 알림처럼 비동기로 오는 신호는
+ * 그 창을 못 맞춰서 진동이 안 되고, 그래서 소리·플래시로 알린다.)
+ */
+export function feedbackTap(strong = false) {
+  if (canVibrate() && vibrationOn) navigator.vibrate(strong ? 22 : 11)
+}
+
 /** 흔드는 중 피드백: 약한 진동 + 아주 짧은 낮은 톡 소리 */
 export function feedbackShake() {
-  if (canVibrate && vibrationOn) navigator.vibrate(25)
+  if (canVibrate() && vibrationOn) navigator.vibrate(25)
   beep(220, 40, 0.08)
 }
 
 /** 던지기(확정) 피드백: 강한 진동 + 높은 톤 */
 export function feedbackThrow() {
-  if (canVibrate && vibrationOn) navigator.vibrate([0, 60, 40, 120])
+  if (canVibrate() && vibrationOn) navigator.vibrate([0, 60, 40, 120])
   beep(660, 120, 0.25)
 }
 
@@ -82,7 +135,7 @@ export function feedbackThrow() {
  *   (단 iOS 는 사용자 탭 안에서 unlockAudio() 를 한 번 호출해 둬야 한다)
  */
 export function feedbackTurn() {
-  if (canVibrate && vibrationOn) navigator.vibrate([0, 70, 60, 70])
+  if (canVibrate() && vibrationOn) navigator.vibrate([0, 70, 60, 70])
   beep(784, 110, 0.22) // G5
   window.setTimeout(() => beep(1046, 150, 0.22), 130) // C6
 }
@@ -133,6 +186,6 @@ export function feedbackDiceHit(strength: number) {
 
 /** 다 굴러 멈췄을 때의 '툭' — 조금 낮고 짧게 */
 export function feedbackDiceLand() {
-  if (canVibrate && vibrationOn) navigator.vibrate(30)
+  if (canVibrate() && vibrationOn) navigator.vibrate(30)
   clack(760 + Math.random() * 260, 90, 0.13, 1.1)
 }

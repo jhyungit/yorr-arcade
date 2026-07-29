@@ -2,7 +2,15 @@ import { useEffect, useRef, useState } from 'react'
 import { socket } from '../../net/socket'
 import { answerLatencyPing } from '../../net/latency'
 import { useSwing } from './useSwing'
-import { canVibrate, feedbackDiceLand, unlockAudio } from '../../lib/feedback'
+import {
+  canVibrate,
+  feedbackDiceLand,
+  feedbackSettings,
+  feedbackTap,
+  setSoundEnabled,
+  setVibrationEnabled,
+  unlockAudio,
+} from '../../lib/feedback'
 import PhoneController from '../yacht/PhoneController'
 
 /**
@@ -31,6 +39,10 @@ export default function Controller({ initialCode }: ControllerProps) {
   const [player, setPlayer] = useState(1)
   const [error, setError] = useState<string | null>(null)
   const [motionOn, setMotionOn] = useState(false)
+  // 피드백 설정(소리·진동) — 톱니바퀴 패널에서 바꾼다. 초기값은 저장된 값.
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [soundOn, setSoundOn] = useState(() => feedbackSettings().sound)
+  const [vibeOn, setVibeOn] = useState(() => feedbackSettings().vibration)
   const [tiltOn, setTiltOn] = useState(false) // 슬래셔: 폰 기울기(모션)로 블레이드 조준 켜짐
   // 노트북(화면)이 disp:game 으로 알려줌. 게임 선택 전엔 'idle'(대기).
   const [game, setGame] = useState<CtrlGame>('idle')
@@ -92,6 +104,9 @@ export default function Controller({ initialCode }: ControllerProps) {
     tiltNeutral.current.has = false
   }
 
+  useEffect(() => setSoundEnabled(soundOn), [soundOn])
+  useEffect(() => setVibrationEnabled(vibeOn), [vibeOn])
+
   const { permission, requestPermission } = useSwing({
     onSwing: () => {
       socket.emit('ctrl:swing')
@@ -112,8 +127,8 @@ export default function Controller({ initialCode }: ControllerProps) {
       // player 를 지정하지 않은 신호는 "모든 폰" 대상 (요트 주사위 착지 등)
       if (d?.player != null && d.player !== playerRef.current) return
       // 주사위 착지는 진동이 없는 기기(아이폰)에서도 알 수 있게 소리로 대체
-      if (d?.kind === 'dice' && !canVibrate) return feedbackDiceLand()
-      if (!canVibrate) return
+      if (d?.kind === 'dice' && !canVibrate()) return feedbackDiceLand()
+      if (!canVibrate()) return
       if (d?.kind === 'dice') navigator.vibrate([0, 24, 30, 46])
       else if (d?.kind === 'smash') navigator.vibrate([0, 60, 40, 120])
       else if (d?.kind === 'foul') navigator.vibrate([0, 90, 60, 90, 60, 90])
@@ -126,7 +141,7 @@ export default function Controller({ initialCode }: ControllerProps) {
     }
     // 리듬: 매 박 신호 → 짧게 진동 (손으로 비트 느끼기)
     const onBeat = () => {
-      if (canVibrate) navigator.vibrate(10)
+      if (canVibrate()) navigator.vibrate(10)
     }
     socket.on('display:disconnected', onDisp)
     socket.on('ctrl:hit', onHit)
@@ -239,6 +254,75 @@ export default function Controller({ initialCode }: ControllerProps) {
       {!isYacht && (
         <div className="text-5xl mt-3 mb-1">
           {isRhythm ? '🥁' : isReaction ? '🤠' : isSlasher ? '🗡️' : isIdle ? '🎮' : '🏓'}
+        </div>
+      )}
+
+      {/* 설정 — 오른쪽 상단 톱니바퀴 */}
+      <button
+        onClick={() => {
+          unlockAudio() // iOS: 사용자 탭 안에서 오디오를 깨워 둔다
+          feedbackTap()
+          setSettingsOpen((v) => !v)
+        }}
+        aria-label="설정"
+        className="absolute right-3 top-3 z-40 flex h-10 w-10 items-center justify-center rounded-full text-lg"
+        style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)' }}
+      >
+        ⚙️
+      </button>
+
+      {settingsOpen && (
+        <div
+          className="absolute inset-0 z-40 flex items-start justify-end bg-black/60 p-3 pt-16 backdrop-blur-sm"
+          onClick={() => setSettingsOpen(false)}
+        >
+          <div
+            className="w-full max-w-[280px] rounded-2xl p-4"
+            style={{ background: '#141a26', border: '1px solid rgba(255,255,255,0.14)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <span className="label-mono text-white/45">SETTINGS</span>
+              <button
+                onClick={() => setSettingsOpen(false)}
+                aria-label="닫기"
+                className="text-white/50"
+              >
+                ✕
+              </button>
+            </div>
+
+            <Toggle
+              label="소리"
+              desc="알림음 · 주사위 소리"
+              on={soundOn}
+              onChange={(v) => {
+                unlockAudio()
+                setSoundOn(v)
+              }}
+            />
+            <Toggle
+              label="진동"
+              desc={
+                canVibrate()
+                  ? '탭 · 알림 햅틱'
+                  : '이 기기는 웹 진동을 지원하지 않아요 (아이폰)'
+              }
+              on={vibeOn}
+              disabled={!canVibrate()}
+              onChange={(v) => {
+                setVibeOn(v)
+                if (v) feedbackTap(true) // 켜자마자 한 번 느껴 보게
+              }}
+            />
+
+            {!canVibrate() && (
+              <p className="mt-3 text-[11px] leading-relaxed text-white/40">
+                아이폰은 웹 진동이 막혀 있어 <b className="text-white/60">소리와 화면 플래시</b>로
+                차례를 알려줘요.
+              </p>
+            )}
+          </div>
         </div>
       )}
 
@@ -431,5 +515,45 @@ export default function Controller({ initialCode }: ControllerProps) {
         </div>
       )}
     </div>
+  )
+}
+
+/** 설정 패널의 on/off 한 줄 */
+function Toggle({
+  label,
+  desc,
+  on,
+  disabled,
+  onChange,
+}: {
+  label: string
+  desc: string
+  on: boolean
+  disabled?: boolean
+  onChange: (on: boolean) => void
+}) {
+  return (
+    <button
+      onClick={() => !disabled && onChange(!on)}
+      disabled={disabled}
+      aria-pressed={on}
+      className="mb-1.5 flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left"
+      style={{ background: 'rgba(255,255,255,0.05)', opacity: disabled ? 0.5 : 1 }}
+    >
+      <span className="min-w-0">
+        <span className="block text-[13px] font-bold text-white/90">{label}</span>
+        <span className="block text-[11px] leading-snug text-white/40">{desc}</span>
+      </span>
+      {/* 스위치 */}
+      <span
+        className="relative h-6 w-11 shrink-0 rounded-full transition-colors"
+        style={{ background: on && !disabled ? '#49e08a' : 'rgba(255,255,255,0.18)' }}
+      >
+        <span
+          className="absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all"
+          style={{ left: on && !disabled ? 22 : 2 }}
+        />
+      </span>
+    </button>
   )
 }

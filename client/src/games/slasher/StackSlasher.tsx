@@ -182,7 +182,7 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
     const g = gameRef.current
 
     const vibe = (p: number | number[]) => {
-      if (vibeRef.current && canVibrate) navigator.vibrate(p)
+      if (vibeRef.current && canVibrate()) navigator.vibrate(p)
     }
 
     const commit = () => {
@@ -699,7 +699,7 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
         >
           ‹ 게임 선택
         </button>
-        {ui.phase !== 'playing' && canVibrate && (
+        {ui.phase !== 'playing' && canVibrate() && (
           <button
             onClick={() => setVibeOn((v) => !v)}
             className={`pointer-events-auto text-xs rounded-full px-3 py-1 border ${

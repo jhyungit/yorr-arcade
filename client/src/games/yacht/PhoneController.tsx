@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { socket } from '../../net/socket'
-import { canVibrate, feedbackTurn, setSoundEnabled, unlockAudio } from '../../lib/feedback'
+import { canVibrate, feedbackTap, feedbackTurn } from '../../lib/feedback'
 import { REACTION_EMOJI, type ReactionType } from '../../net/types'
 import {
   YACHT_KEEP,
@@ -92,11 +92,22 @@ function Die({ value, kept, disabled, onTap }: {
 export default function PhoneController({ onSwing }: { onSwing: () => void }) {
   const [view, setView] = useState<YachtView | null>(null)
   const [now, setNow] = useState(() => Date.now())
-  /* 알림 소리 on/off. 아이폰은 진동이 없어 소리가 유일한 알림이라 기본은 켜 두고,
-     조용한 데서 플레이할 때 끌 수 있게 한다. */
-  const [soundOn, setSoundOn] = useState(true)
   const [flash, setFlash] = useState(0) // 내 차례 플래시 (키를 바꿔 애니메이션 재생)
   const wasMine = useRef(false)
+
+  /* 아이폰용 진동 폴리필을 이 화면에서만 붙인다.
+     숨긴 <input switch> 를 label.click() 으로 토글해 iOS 시스템 햅틱을 빌려 쓰는 방식.
+     라이브러리가 DOM 을 <label> 로 감싸고 클릭을 가로채므로, WebGL 캔버스 탭 판정이
+     있는 게임 화면에는 절대 올리지 않는다. 컨트롤러는 순수 버튼 UI 라 안전하다.
+     ※ iOS 18.4+ 는 "진짜 탭 직후 1초" 안에만 허용 → 탭 햅틱은 되고,
+       비동기로 오는 내 차례 알림은 안 된다(그건 소리·플래시가 담당). */
+  useEffect(() => {
+    if (!canVibrate()) {
+      void import('ios-vibrator-pro-max').catch(() => {
+        /* 못 불러와도 소리·플래시로 동작한다 */
+      })
+    }
+  }, [])
 
   // 노트북이 보내 주는 화면 상태 수신
   useEffect(() => {
@@ -126,8 +137,6 @@ export default function PhoneController({ onSwing }: { onSwing: () => void }) {
     wasMine.current = mine
   }, [view?.mine])
 
-  useEffect(() => setSoundEnabled(soundOn), [soundOn])
-
   if (!view) {
     return (
       <div className="mt-8 w-full max-w-xs text-center">
@@ -156,7 +165,10 @@ export default function PhoneController({ onSwing }: { onSwing: () => void }) {
       <button
         key={c.id}
         disabled={!pickable}
-        onClick={() => socket.emit(YACHT_SELECT, { categoryId: c.id })}
+        onClick={() => {
+          feedbackTap()
+          socket.emit(YACHT_SELECT, { categoryId: c.id })
+        }}
         className="flex items-center justify-between rounded-lg px-2.5 py-2 text-left transition-colors active:scale-[0.98]"
         style={{
           background: isSel ? 'rgba(63,191,155,0.22)' : filled ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.07)',
@@ -208,7 +220,10 @@ export default function PhoneController({ onSwing }: { onSwing: () => void }) {
             value={v}
             kept={view.kept[i]}
             disabled={!canKeep}
-            onTap={() => socket.emit(YACHT_KEEP, { index: i })}
+            onTap={() => {
+              feedbackTap()
+              socket.emit(YACHT_KEEP, { index: i })
+            }}
           />
         ))}
       </div>
@@ -230,7 +245,10 @@ export default function PhoneController({ onSwing }: { onSwing: () => void }) {
 
       {view.selected ? (
         <button
-          onClick={() => socket.emit(YACHT_SCORE, { categoryId: view.selected })}
+          onClick={() => {
+            feedbackTap(true) // 확정은 조금 더 확실하게
+            socket.emit(YACHT_SCORE, { categoryId: view.selected })
+          }}
           disabled={locked}
           className="mt-2 w-full rounded-2xl py-4 text-[15px] font-black disabled:opacity-40"
           style={{ background: `linear-gradient(180deg,#6fdcba,#2fa98b)`, color: '#05231b' }}
@@ -239,7 +257,10 @@ export default function PhoneController({ onSwing }: { onSwing: () => void }) {
         </button>
       ) : (
         <button
-          onClick={onSwing}
+          onClick={() => {
+            feedbackTap()
+            onSwing()
+          }}
           disabled={locked || view.rollsLeft <= 0}
           className="mt-2 w-full rounded-2xl py-4 text-[15px] font-black disabled:opacity-40"
           style={{ background: `linear-gradient(180deg,${GOLD_2},${GOLD})`, color: '#17120a' }}
@@ -271,25 +292,16 @@ export default function PhoneController({ onSwing }: { onSwing: () => void }) {
       {/* 내 차례 플래시 (소리를 껐거나 못 듣는 상황의 보조 신호) */}
       {flash > 0 && <span key={flash} className="yc-turn-flash" />}
 
-      {/* 알림 설정 — 아이폰은 진동이 없어서 소리가 유일한 알림이다 */}
-      <button
-        onClick={() => {
-          unlockAudio() // iOS: 사용자 탭 안에서 오디오를 깨워 둔다
-          setSoundOn((v) => !v)
-        }}
-        className="mt-2 shrink-0 self-center text-[11px] text-white/45 underline"
-      >
-        {soundOn ? '🔔 차례 알림음 켜짐' : '🔇 차례 알림음 꺼짐'}
-        {!canVibrate && soundOn && ' · 이 기기는 진동 미지원'}
-      </button>
-
       {/* 리액션 — 남의 차례에도 참견할 수 있게 */}
       {view.canReact && (
         <div className="mt-2 flex shrink-0 justify-center gap-1.5">
           {REACTIONS.map((t) => (
             <button
               key={t}
-              onClick={() => socket.emit(YACHT_REACT, { type: t })}
+              onClick={() => {
+                feedbackTap()
+                socket.emit(YACHT_REACT, { type: t })
+              }}
               aria-label={`리액션 ${t}`}
               className="flex h-10 w-10 items-center justify-center rounded-full text-lg active:scale-90"
               style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)' }}

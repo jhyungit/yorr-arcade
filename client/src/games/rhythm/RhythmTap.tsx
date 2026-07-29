@@ -317,7 +317,7 @@ export default function RhythmTap({ onExit, phoneConnected = false }: RhythmTapP
         g.score += Math.round(JUDGE_SCORE[kind] * mult)
         spawnParticles(n.lane, kind)
         audioRef.current?.playHit(kind)
-        if (vibeRef.current && canVibrate) navigator.vibrate(kind === 'perfect' ? 22 : 12)
+        if (vibeRef.current && canVibrate()) navigator.vibrate(kind === 'perfect' ? 22 : 12)
       }
       showLabel(kind)
       commit()
@@ -372,7 +372,7 @@ export default function RhythmTap({ onExit, phoneConnected = false }: RhythmTapP
         const beat = Math.floor(t / g.beatmap.beatMs)
         if (beat !== g.lastBeat) {
           g.lastBeat = beat
-          if (vibeRef.current && canVibrate) navigator.vibrate(8)
+          if (vibeRef.current && canVibrate()) navigator.vibrate(8)
           // 스윙 모드: 폰(컨트롤러)이 손으로 비트를 느끼도록 신호
           if (g.swing) socket.emit('game:beat')
         }
@@ -721,7 +721,7 @@ export default function RhythmTap({ onExit, phoneConnected = false }: RhythmTapP
           >
             {phoneConnected ? '🎮 폰 채 연결됨' : '🎮 키보드 Space/↓'}
           </span>
-        ) : canVibrate ? (
+        ) : canVibrate() ? (
           <button
             onClick={() => setVibeOn((v) => !v)}
             className={`text-xs rounded-full px-3 py-1 border ${

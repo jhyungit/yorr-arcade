@@ -250,7 +250,7 @@ export default function ReactionBattle({
     t.current.impact = window.setTimeout(() => {
       m.current.impact = true
       // 경고만 받은 라운드는 약하게, 실제로 맞은 라운드는 강하게
-      if (canVibrate) navigator.vibrate(hitSide !== 0 ? [0, 45, 25, 70] : 30)
+      if (canVibrate()) navigator.vibrate(hitSide !== 0 ? [0, 45, 25, 70] : 30)
       render()
     }, BULLET_MS)
 
@@ -265,7 +265,7 @@ export default function ReactionBattle({
     if (g.phase !== 'waiting') return
     g.phase = 'signal'
     g.signalAt = performance.now()
-    if (canVibrate) navigator.vibrate([0, 40, 30, 60])
+    if (canVibrate()) navigator.vibrate([0, 40, 30, 60])
     render()
     if (g.online === 'host') socket.emit('rx:signal')
 
@@ -331,7 +331,7 @@ export default function ReactionBattle({
         resolve()
         return
       }
-      if (canVibrate) navigator.vibrate(18)
+      if (canVibrate()) navigator.vibrate(18)
 
       if (g.mode === 'solo' || (g.ms1 != null && g.ms2 != null)) {
         resolve()
@@ -363,7 +363,7 @@ export default function ReactionBattle({
         if (g.resolved) return
         g.resolved = true
         g.ms2 = value
-        if (canVibrate) navigator.vibrate(value === FOUL ? 60 : 18)
+        if (canVibrate()) navigator.vibrate(value === FOUL ? 60 : 18)
         socket.emit('rx:react', { ms: value })
         g.impact = false
         g.last = { ...EMPTY_RESULT, ms2: value, pending: true }
@@ -463,7 +463,7 @@ export default function ReactionBattle({
       if (g.online !== 'guest' || g.phase !== 'waiting') return
       g.phase = 'signal'
       g.signalAt = performance.now()
-      if (canVibrate) navigator.vibrate([0, 40, 30, 60])
+      if (canVibrate()) navigator.vibrate([0, 40, 30, 60])
       render()
     }
     // 호스트 판정 결과
@@ -512,7 +512,7 @@ export default function ReactionBattle({
       render()
       t.current.impact = window.setTimeout(() => {
         m.current.impact = true
-        if (canVibrate) navigator.vibrate(hitSide !== 0 ? [0, 45, 25, 70] : 30)
+        if (canVibrate()) navigator.vibrate(hitSide !== 0 ? [0, 45, 25, 70] : 30)
         render()
       }, BULLET_MS)
       if (d.over) {
