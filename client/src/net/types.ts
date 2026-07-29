@@ -8,14 +8,14 @@ import type { CategoryId, ScoreSheet } from '../game/yacht'
 export type RoomStatus = 'lobby' | 'playing' | 'finished'
 
 export interface PlayerState {
-  id: string
+  id: string // 좌석 id (p1~p6). 소켓 id 가 아니라 재접속해도 그대로다
   nickname: string
   connected: boolean
   sheet: ScoreSheet
-  dice: number[] // 현재 보이는 주사위 5개
+  dice: number[] // 판에 놓인 주사위 5개 (서버가 굴린 결과)
+  kept: boolean[] // 남기기로 고정한 주사위
   rollsLeft: number
-  rolledThisRound: boolean
-  done: boolean // 이번 라운드 점수 확정 여부
+  rolled: boolean // 이번 차례에 한 번이라도 굴렸는가
   total: number
 }
 
@@ -25,8 +25,32 @@ export interface RoomState {
   status: RoomStatus
   round: number
   totalRounds: number
+  maxPlayers: number
+  turnId: string | null // 지금 차례인 좌석 id (대기실/종료면 null)
+  turnSeq: number // 차례가 넘어갈 때마다 +1 → 판을 새로 깐다
+  rollSeq: number // 굴릴 때마다 +1 → 굴리기 연출을 재생한다
+  deadline: number | null // 이번 차례 마감 시각(epoch ms)
+  turnMs: number // 진행 바 계산용 총 길이
   players: PlayerState[]
-  deadline: number | null // 이번 라운드 마감 시각(epoch ms). 타이머는 이 값 - now 로 계산
+}
+
+/** 순위 (서버 room:finished 에 실려 온다. 동점은 같은 등수) */
+export interface RankRow {
+  id: string
+  nickname: string
+  total: number
+  rank: number
+}
+
+/** 누가 어디에 몇 점을 넣었는지 (진행 로그) */
+export interface RoomLog {
+  seq: number
+  playerId: string
+  nickname: string
+  categoryId: CategoryId
+  score: number
+  auto: boolean // 시간 초과로 서버가 대신 기록했는가
+  round: number
 }
 
 // 리액션 (like/laugh/shock/clap/gg)
@@ -46,11 +70,12 @@ export interface IncomingReaction {
   type: ReactionType
 }
 
-// 방 만들기/참가 요청의 응답(ack) 형태
+// 방 만들기/참가/재접속 요청의 응답(ack) 형태
 export interface JoinAck {
   ok: boolean
   code?: string
-  youId?: string
+  youId?: string // 내 좌석 id
+  token?: string // 재접속용 비밀 토큰 (나에게만 온다)
   error?: string
 }
 

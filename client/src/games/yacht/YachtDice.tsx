@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import DiceBoard from './DiceBoard'
 import ScoreCard from './ScoreCard'
 import { useMotionDice } from '../../hooks/useMotionDice'
+import { notifyDiceLanded, usePhoneRoll } from './usePhoneRoll'
 import { feedbackShake, feedbackThrow, unlockAudio } from '../../lib/feedback'
 import {
   CATEGORIES,
@@ -60,7 +61,14 @@ function grade(total: number) {
   return { title: '다음 판이 있잖아요', emoji: '🍀' }
 }
 
-export default function YachtDice({ onExit }: { onExit: () => void }) {
+export default function YachtDice({
+  onExit,
+  phoneConnected = false,
+}: {
+  onExit: () => void
+  /** 페어링된 폰이 붙어 있는가 (허브에서 연결) — 흔들어 굴릴 수 있다 */
+  phoneConnected?: boolean
+}) {
   const [sheet, setSheet] = useState<ScoreSheet>(() => emptyScoreSheet())
   const [values, setValues] = useState<number[]>([1, 2, 3, 4, 5])
   const [kept, setKept] = useState<boolean[]>(FRESH)
@@ -140,6 +148,12 @@ export default function YachtDice({ onExit }: { onExit: () => void }) {
     enabled: motionOn && !tumbling && !finished,
   })
 
+  // 노트북을 화면으로 쓰고 "페어링한 폰"을 흔드는 경로 (ctrl:swing)
+  usePhoneRoll({
+    onRoll: roll,
+    enabled: !tumbling && !finished && rollsLeft > 0,
+  })
+
   const enableMotion = async () => {
     unlockAudio()
     await requestPermission()
@@ -151,6 +165,7 @@ export default function YachtDice({ onExit }: { onExit: () => void }) {
     (shown: number[]) => {
       setValues(shown)
       setTumbling(false)
+      notifyDiceLanded() // 폰에도 착지를 알린다 (짧은 진동)
       // 성립한 족보가 있으면(아직 안 쓴 칸만) 크게 알린다
       const cat = calloutHand(shown, sheet)
       if (!cat || announced.current.has(cat)) return
@@ -274,7 +289,11 @@ export default function YachtDice({ onExit }: { onExit: () => void }) {
                 <span className="text-[11px] text-[var(--ink-3)] ml-1.5">남은 굴리기</span>
               </div>
               <span className="text-[11px] text-[var(--ink-3)]">
-                {rolled ? '주사위를 탭하면 고정' : '흔들거나 눌러서 굴리기'}
+                {rolled
+                  ? '주사위를 탭하면 고정'
+                  : phoneConnected
+                    ? '📱 폰을 흔들어 굴리기'
+                    : '흔들거나 눌러서 굴리기'}
               </span>
             </div>
 
@@ -294,10 +313,16 @@ export default function YachtDice({ onExit }: { onExit: () => void }) {
                     : '기록할 칸을 고르세요'}
             </button>
 
-            {permission !== 'granted' && (
-              <button onClick={enableMotion} className="yd-link mt-2">
-                📳 흔들어서 굴리기 켜기
-              </button>
+            {phoneConnected ? (
+              <p className="mt-2 text-center text-[11px] text-[var(--pos)]">
+                📱 폰 컨트롤러 연결됨 — 폰을 흔들면 굴러갑니다
+              </p>
+            ) : (
+              permission !== 'granted' && (
+                <button onClick={enableMotion} className="yd-link mt-2">
+                  📳 흔들어서 굴리기 켜기
+                </button>
+              )
             )}
 
             {/* 개발 중에만 보이는 족보 연출 확인용 안내 */}

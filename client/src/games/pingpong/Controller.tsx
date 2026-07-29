@@ -17,6 +17,9 @@ import { canVibrate } from '../../lib/feedback'
  *
  * 접속: https://<노트북주소>:5173/?ctrl=CODE  (또는 코드 직접 입력)
  */
+/** 폰 컨트롤러가 흉내낼 수 있는 게임 (노트북이 disp:game 으로 알려준다) */
+type CtrlGame = 'idle' | 'pingpong' | 'rhythm' | 'reaction' | 'slasher' | 'yacht'
+
 interface ControllerProps {
   initialCode: string
 }
@@ -29,7 +32,7 @@ export default function Controller({ initialCode }: ControllerProps) {
   const [motionOn, setMotionOn] = useState(false)
   const [tiltOn, setTiltOn] = useState(false) // 슬래셔: 폰 기울기(모션)로 블레이드 조준 켜짐
   // 노트북(화면)이 disp:game 으로 알려줌. 게임 선택 전엔 'idle'(대기).
-  const [game, setGame] = useState<'idle' | 'pingpong' | 'rhythm' | 'reaction' | 'slasher'>('idle')
+  const [game, setGame] = useState<CtrlGame>('idle')
   const swings = useRef(0)
   const [count, setCount] = useState(0)
   const playerRef = useRef(1)
@@ -45,16 +48,18 @@ export default function Controller({ initialCode }: ControllerProps) {
   const isRhythm = game === 'rhythm'
   const isReaction = game === 'reaction'
   const isSlasher = game === 'slasher'
+  const isYacht = game === 'yacht'
   const isIdle = game === 'idle'
-  const accent = isRhythm
-    ? '#a855f7'
-    : isReaction
-      ? '#f59e0b'
-      : isSlasher
-        ? '#22d3ee'
-        : isIdle
-          ? '#64748b'
-          : '#2b8fe0'
+  // 게임별 대표색 — 노트북 화면 톤과 맞춘다 (요트는 골드)
+  const ACCENT: Record<CtrlGame, string> = {
+    idle: '#64748b',
+    pingpong: '#2b8fe0',
+    rhythm: '#a855f7',
+    reaction: '#f59e0b',
+    slasher: '#22d3ee',
+    yacht: '#d8a24a',
+  }
+  const accent = ACCENT[game]
 
   // 스윙/그음 횟수 카운트
   const bump = () => {
@@ -102,23 +107,18 @@ export default function Controller({ initialCode }: ControllerProps) {
     // 내 플레이어가 실제로 공을 맞춘 순간 → 안드로이드만 진동 (아이폰은 미지원이라 무동작)
     //  kind: 'smash'=강한 임팩트 · 'foul'=부정출발 경고(짜증나는 3연타) · 그 외=기본
     const onHit = (d?: { player?: number; kind?: string }) => {
-      if ((d?.player ?? 1) !== playerRef.current) return
+      // player 를 지정하지 않은 신호는 "모든 폰" 대상 (요트 주사위 착지 등)
+      if (d?.player != null && d.player !== playerRef.current) return
       if (!canVibrate) return
-      if (d?.kind === 'smash') navigator.vibrate([0, 60, 40, 120])
+      if (d?.kind === 'dice') navigator.vibrate([0, 24, 30, 46])
+      else if (d?.kind === 'smash') navigator.vibrate([0, 60, 40, 120])
       else if (d?.kind === 'foul') navigator.vibrate([0, 90, 60, 90, 60, 90])
       else navigator.vibrate(35)
     }
     // 노트북이 게임 종류를 알려줌 → 폰 UI 적응 (idle=게임 선택 대기)
     const onGame = (d?: { game?: string }) => {
-      if (
-        d?.game === 'rhythm' ||
-        d?.game === 'pingpong' ||
-        d?.game === 'reaction' ||
-        d?.game === 'slasher' ||
-        d?.game === 'idle'
-      ) {
-        setGame(d.game as 'idle' | 'pingpong' | 'rhythm' | 'reaction' | 'slasher')
-      }
+      const known: CtrlGame[] = ['idle', 'pingpong', 'rhythm', 'reaction', 'slasher', 'yacht']
+      if (known.includes(d?.game as CtrlGame)) setGame(d!.game as CtrlGame)
     }
     // 리듬: 매 박 신호 → 짧게 진동 (손으로 비트 느끼기)
     const onBeat = () => {
@@ -218,12 +218,14 @@ export default function Controller({ initialCode }: ControllerProps) {
             ? '퀵드로우 · 컨트롤러'
             : isSlasher
               ? '스택 슬래셔 · 컨트롤러'
-              : isIdle
-                ? 'YORR · 컨트롤러'
-                : 'PING · PONG · 컨트롤러'}
+              : isYacht
+                ? '요트 다이스 · 컨트롤러'
+                : isIdle
+                  ? 'YORR · 컨트롤러'
+                  : 'PING · PONG · 컨트롤러'}
       </div>
       <div className="text-5xl mt-3 mb-1">
-        {isRhythm ? '🥁' : isReaction ? '🤠' : isSlasher ? '🗡️' : isIdle ? '🎮' : '🏓'}
+        {isRhythm ? '🥁' : isReaction ? '🤠' : isSlasher ? '🗡️' : isYacht ? '🎲' : isIdle ? '🎮' : '🏓'}
       </div>
 
       {!joined ? (
@@ -258,9 +260,11 @@ export default function Controller({ initialCode }: ControllerProps) {
                 ? `🤠 퀵드로우 · P${player}`
                 : isSlasher
                   ? '🗡️ 슬래셔 터치패드'
-                  : isIdle
-                    ? `게임 선택을 기다리는 중… (P${player})`
-                    : `플레이어 ${player}`}
+                  : isYacht
+                    ? '🎲 주사위 흔들기'
+                    : isIdle
+                      ? `게임 선택을 기다리는 중… (P${player})`
+                      : `플레이어 ${player}`}
           </p>
 
           {isSlasher ? (
@@ -322,7 +326,9 @@ export default function Controller({ initialCode }: ControllerProps) {
           ) : permission !== 'granted' ? (
             <>
               <p className="text-white/70 text-sm text-center mb-4">
-                폰을 휘둘러 조종하려면 센서를 켜세요.
+                {isYacht
+                  ? '폰을 흔들어 주사위를 굴리려면 센서를 켜세요.'
+                  : '폰을 휘둘러 조종하려면 센서를 켜세요.'}
               </p>
               <button
                 onClick={enableMotion}
@@ -344,6 +350,11 @@ export default function Controller({ initialCode }: ControllerProps) {
                 <>
                   노트북 화면의 신호등이 <b className="text-[#4ade80]">초록</b>이 되는 순간 폰을{' '}
                   <b className="text-white">확! 휘둘러 뽑아요.</b> (신호 전엔 가만히 — 부정출발)
+                </>
+              ) : isYacht ? (
+                <>
+                  폰을 <b className="text-white">위아래로 흔들면</b> 주사위가 굴러가요! 내 차례가
+                  아닐 때나 굴리는 중엔 반응하지 않아요.
                 </>
               ) : isIdle ? (
                 <>
@@ -370,7 +381,7 @@ export default function Controller({ initialCode }: ControllerProps) {
                 style={{ background: `${accent}33`, border: `2px solid ${accent}` }}
               >
                 <span className="text-6xl">
-                  {isRhythm ? '🥁' : isReaction ? '🔫' : isIdle ? '🎮' : '🏓'}
+                  {isRhythm ? '🥁' : isReaction ? '🔫' : isYacht ? '🎲' : isIdle ? '🎮' : '🏓'}
                 </span>
               </button>
               <p className="text-white/50 text-xs mt-4">
@@ -378,7 +389,9 @@ export default function Controller({ initialCode }: ControllerProps) {
                   ? '버튼을 눌러도 쳐집니다'
                   : isReaction
                     ? '버튼을 눌러도 뽑힙니다'
-                    : '버튼을 눌러도 스윙됩니다'}{' '}
+                    : isYacht
+                      ? '버튼을 눌러도 굴러갑니다'
+                      : '버튼을 눌러도 스윙됩니다'}{' '}
                 · 총 {count}회
               </p>
             </>

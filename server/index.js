@@ -2,12 +2,17 @@
 //  요트 다이스 실시간 멀티플레이 서버 (Socket.IO)
 // -------------------------------------------------------------
 //  역할:
-//   - 방 만들기 / 입장코드로 참가 / 대기실
-//   - "동시 플레이" 라운드 진행 (모두가 각자 굴리고, 각자 한 칸씩 점수 확정)
-//   - 모든 플레이어 상태(주사위/점수/총점)를 방 전체에 실시간 브로드캐스트
+//   - 방 만들기 / 6자리 입장코드로 참가 / 대기실 (최대 6인)
+//   - "턴제" 진행 — 한 사람씩 돌아가며 3번 굴리고 한 칸을 확정한다
+//   - 모든 플레이어 상태(주사위/킵/점수/총점)를 방 전체에 실시간 브로드캐스트
 //
 //  설계 메모:
-//   - 주사위는 "클라이언트에서" 굴린다(센서/로컬 계산). 서버는 결과값만 받아 공유.
+//   - 주사위는 "서버가" 굴린다. 이유가 둘 있다.
+//     ① 관전 — 지금 차례인 사람의 주사위를 모두가 똑같이 봐야 한다.
+//        클라가 굴려 보고하면 도착 전까지 남들 화면이 비고, 순서도 어긋난다.
+//     ② 점수도 서버가 계산한다 (클라가 보낸 점수를 믿지 않는다).
+//   - 자리(좌석) id 는 p1~p6 으로 고정. 소켓 id 는 재접속하면 바뀌므로
+//     플레이어 식별에 쓰지 않는다. 재접속은 본인만 아는 token 으로 한다.
 //   - 방 상태는 서버 메모리에만 저장(DB 없음). 서버 재시작하면 초기화.
 // =============================================================
 
@@ -38,8 +43,19 @@ const TOTAL_ROUNDS = ALL_CATEGORY_IDS.length // 12
 const MAX_ROLLS = 3
 const UPPER_BONUS_THRESHOLD = 63
 const UPPER_BONUS_POINTS = 35
-const ROUND_MS = 25000 // 라운드 제한시간(마감 deadline 계산용)
 const REACTION_TYPES = ['like', 'laugh', 'shock', 'clap', 'gg']
+
+const MAX_PLAYERS = 6
+const ROOM_CODE_LEN = 6 // 초대 코드 6자리
+const SEAT_IDS = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6']
+
+// 턴 제한시간. 다 쓰면 서버가 대신 굴리고 가장 점수가 높은 칸에 기록한다.
+//  → 한 사람이 폰을 놓고 가도 게임이 멈추지 않는다.
+const TURN_MS = 45000
+// 접속이 끊긴 사람의 차례는 오래 기다리지 않는다 (재접속 여유만 준다)
+const AFK_TURN_MS = 8000
+// 자동으로 굴린 뒤 "구르는 걸 볼 시간"을 주고 나서 기록한다
+const AUTO_ROLL_VIEW_MS = 2600
 
 // code -> Room
 const rooms = new Map()
@@ -51,14 +67,22 @@ const pairs = new Map()
 
 // --- 유틸 ---
 
-/** 4자리 방 코드 (헷갈리는 글자 0,O,1,I 제외) */
+/** 6자리 초대 코드 (헷갈리는 글자 0,O,1,I 제외) */
 function makeRoomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   let code
   do {
-    code = Array.from({ length: 4 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('')
+    code = Array.from(
+      { length: ROOM_CODE_LEN },
+      () => alphabet[Math.floor(Math.random() * alphabet.length)],
+    ).join('')
   } while (rooms.has(code)) // 중복 방지
   return code
+}
+
+/** 재접속용 비밀 토큰 — 본인에게만 보낸다(방 상태에는 안 실린다) */
+function makeToken() {
+  return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6)
 }
 
 /** 폰 컨트롤러 페어링용 4자리 코드 (게임 방 코드와 별개) */
@@ -98,6 +122,61 @@ function emptySheet() {
   return sheet
 }
 
+/** 주사위 5개로 이 족보에 기록하면 몇 점인지 (client/src/game/yacht.ts 와 같은 규칙) */
+function scoreFor(id, values) {
+  const counts = [0, 0, 0, 0, 0, 0, 0]
+  for (const v of values) counts[v] += 1
+  const sum = values.reduce((a, b) => a + b, 0)
+  const has = (arr) => arr.every((n) => counts[n] > 0)
+
+  switch (id) {
+    case 'ones':
+      return 1 * counts[1]
+    case 'twos':
+      return 2 * counts[2]
+    case 'threes':
+      return 3 * counts[3]
+    case 'fours':
+      return 4 * counts[4]
+    case 'fives':
+      return 5 * counts[5]
+    case 'sixes':
+      return 6 * counts[6]
+    case 'choice':
+      return sum
+    case 'fourKind':
+      return counts.some((c) => c >= 4) ? sum : 0
+    case 'fullHouse':
+      return counts.some((c) => c === 3) && counts.some((c) => c === 2) ? sum : 0
+    case 'smallStraight':
+      return has([1, 2, 3, 4]) || has([2, 3, 4, 5]) || has([3, 4, 5, 6]) ? 15 : 0
+    case 'largeStraight':
+      return has([1, 2, 3, 4, 5]) || has([2, 3, 4, 5, 6]) ? 30 : 0
+    case 'yacht':
+      return counts.some((c) => c === 5) ? 50 : 0
+    default:
+      return 0
+  }
+}
+
+/**
+ * 시간이 다 됐을 때 대신 고를 칸.
+ * 남은 칸 중 점수가 가장 높은 곳. 전부 0점이면 정의 순서상 앞쪽(에이스 등 손실이 작은 칸).
+ */
+function bestCategory(player) {
+  let best = null
+  let bestScore = -1
+  for (const id of ALL_CATEGORY_IDS) {
+    if (player.sheet[id] !== null) continue
+    const s = scoreFor(id, player.dice)
+    if (s > bestScore) {
+      best = id
+      bestScore = s
+    }
+  }
+  return best
+}
+
 /** 총점 계산 (윗줄 63점 이상이면 보너스 +35) */
 function computeTotal(sheet) {
   let base = 0
@@ -108,39 +187,58 @@ function computeTotal(sheet) {
   return base + bonus
 }
 
-/** 새 플레이어 객체 */
-function makePlayer(id, nickname) {
+/** 새 플레이어 객체 (id 는 좌석 p1~p6, token 은 재접속용 비밀값) */
+function makePlayer(seatId, nickname, socketId) {
   return {
-    id,
-    nickname: nickname?.slice(0, 12) || '익명',
+    id: seatId,
+    token: makeToken(),
+    socketId,
+    nickname: String(nickname || '').trim().slice(0, 12) || '익명',
     connected: true,
     sheet: emptySheet(),
-    dice: [1, 1, 1, 1, 1], // 현재 보이는 주사위
+    dice: [1, 2, 3, 4, 5], // 지금 판에 놓인 주사위
+    kept: [false, false, false, false, false], // 남기기로 한 주사위
     rollsLeft: MAX_ROLLS,
-    rolledThisRound: false,
-    done: false, // 이번 라운드에 점수를 확정했는가
+    rolled: false, // 이번 차례에 한 번이라도 굴렸는가
     total: 0,
   }
 }
 
+/** 비어 있는 좌석 id 하나 (없으면 null) */
+function freeSeat(room) {
+  return SEAT_IDS.find((id) => !room.players.some((p) => p.id === id)) ?? null
+}
+
+/** 지금 차례인 플레이어 (대기실/종료 상태면 undefined) */
+function currentPlayer(room) {
+  return room.status === 'playing' ? room.players[room.turn] : undefined
+}
+
 /** 클라이언트에 보낼 방 상태(그대로 전체 전송 → 클라는 이걸로 화면 렌더) */
 function roomState(room) {
+  const cur = currentPlayer(room)
   return {
     code: room.code,
     hostId: room.hostId,
     status: room.status, // 'lobby' | 'playing' | 'finished'
     round: room.round,
     totalRounds: TOTAL_ROUNDS,
-    deadline: room.deadline ?? null, // 이번 라운드 마감(epoch ms)
+    maxPlayers: MAX_PLAYERS,
+    turnId: cur ? cur.id : null, // 지금 차례인 좌석
+    turnSeq: room.turnSeq, // 차례가 넘어갈 때마다 +1 (클라: 판 리셋)
+    rollSeq: room.rollSeq, // 굴릴 때마다 +1 (클라: 굴리기 연출 재생)
+    deadline: room.deadline ?? null, // 이번 차례 마감(epoch ms)
+    turnMs: room.turnMs, // 진행바 계산용 총 길이
     players: room.players.map((p) => ({
+      // token/socketId 는 절대 내보내지 않는다 (남의 자리를 뺏을 수 있다)
       id: p.id,
       nickname: p.nickname,
       connected: p.connected,
       sheet: p.sheet,
       dice: p.dice,
+      kept: p.kept,
       rollsLeft: p.rollsLeft,
-      rolledThisRound: p.rolledThisRound,
-      done: p.done,
+      rolled: p.rolled,
       total: p.total,
     })),
   }
@@ -151,26 +249,143 @@ function broadcast(io, room) {
   io.to(room.code).emit('room:state', roomState(room))
 }
 
-/** 라운드의 모든 (접속중인) 플레이어가 점수를 확정했으면 다음 라운드로 */
-function maybeAdvanceRound(room) {
-  const active = room.players.filter((p) => p.connected)
-  if (active.length === 0) return
-  const allDone = active.every((p) => p.done)
-  if (!allDone) return
+/** 총점 순위 (동점은 같은 등수) */
+function ranking(room) {
+  const sorted = [...room.players].sort((a, b) => b.total - a.total)
+  let rank = 0
+  let prev = null
+  return sorted.map((p, i) => {
+    if (prev === null || p.total !== prev) rank = i + 1
+    prev = p.total
+    return { id: p.id, nickname: p.nickname, total: p.total, rank }
+  })
+}
 
-  if (room.round >= TOTAL_ROUNDS) {
-    room.status = 'finished'
-    room.deadline = null
+// --- 턴 진행 ---
+
+function clearTurnTimer(room) {
+  if (room.timer) {
+    clearTimeout(room.timer)
+    room.timer = null
+  }
+}
+
+/**
+ * 이번 차례의 제한시간을 걸어 둔다.
+ * 끊긴 사람이면 짧게(재접속 여유만) 주고, 시간이 다 되면 서버가 대신 플레이한다.
+ */
+function armTurnTimer(io, room) {
+  clearTurnTimer(room)
+  const p = currentPlayer(room)
+  if (!p) return
+  const ms = p.connected ? TURN_MS : AFK_TURN_MS
+  room.turnMs = ms
+  room.deadline = Date.now() + ms
+  const seq = room.turnSeq
+  room.timer = setTimeout(() => {
+    room.timer = null
+    if (room.turnSeq !== seq) return // 그 사이에 차례가 넘어갔다
+    autoPlay(io, room)
+  }, ms + 150)
+}
+
+/** 차례 시작 — 판을 새로 깔고 굴리기 3번을 준다 */
+function beginTurn(io, room) {
+  const p = currentPlayer(room)
+  if (!p) return
+  p.dice = [1, 2, 3, 4, 5]
+  p.kept = [false, false, false, false, false]
+  p.rollsLeft = MAX_ROLLS
+  p.rolled = false
+  room.turnSeq += 1
+  armTurnTimer(io, room)
+}
+
+/** 실제로 굴린다 — kept 인 주사위는 그대로, 나머지만 새로 */
+function rollDice(room, p) {
+  p.dice = p.dice.map((v, i) => (p.kept[i] ? v : 1 + Math.floor(Math.random() * 6)))
+  p.rollsLeft = Math.max(0, p.rollsLeft - 1)
+  p.rolled = true
+  room.rollSeq += 1
+}
+
+/** 점수 확정 → 다음 차례로 */
+function applyScore(io, room, p, categoryId, auto) {
+  const score = scoreFor(categoryId, p.dice)
+  p.sheet[categoryId] = score
+  p.total = computeTotal(p.sheet)
+  io.to(room.code).emit('room:log', {
+    seq: room.rollSeq * 100 + room.turnSeq, // 화면 표시용 고유 키
+    playerId: p.id,
+    nickname: p.nickname,
+    categoryId,
+    score,
+    auto: !!auto,
+    round: room.round,
+  })
+  advanceTurn(io, room)
+}
+
+/** 시간 초과/접속 끊김 — 서버가 대신 굴리고 가장 높은 칸에 기록 */
+function autoPlay(io, room) {
+  const p = currentPlayer(room)
+  if (!p) return
+  if (!p.rolled) {
+    // 한 번도 안 굴렸으면 굴려는 준다. 구르는 연출을 볼 시간을 주고 기록.
+    rollDice(room, p)
+    broadcast(io, room)
+    const seq = room.turnSeq
+    room.timer = setTimeout(() => {
+      room.timer = null
+      if (room.turnSeq !== seq) return
+      const cur = currentPlayer(room)
+      if (cur) applyScore(io, room, cur, bestCategory(cur), true)
+    }, AUTO_ROLL_VIEW_MS)
     return
   }
-  // 다음 라운드 준비
-  room.round += 1
-  room.deadline = Date.now() + ROUND_MS
+  applyScore(io, room, p, bestCategory(p), true)
+}
+
+/** 다음 사람 차례로. 한 바퀴 돌면 라운드 +1, 12라운드를 다 돌면 종료 */
+function advanceTurn(io, room) {
+  clearTurnTimer(room)
+  let turn = room.turn + 1
+  let round = room.round
+  if (turn >= room.players.length) {
+    turn = 0
+    round += 1
+  }
+
+  if (round > TOTAL_ROUNDS) {
+    room.status = 'finished'
+    room.deadline = null
+    room.turnSeq += 1
+    io.to(room.code).emit('room:finished', { ranking: ranking(room) })
+    broadcast(io, room)
+    return
+  }
+
+  room.turn = turn
+  room.round = round
+  beginTurn(io, room)
+  broadcast(io, room)
+}
+
+/** 대기실로 되돌리기 (새 게임 준비) */
+function resetRoom(room) {
+  clearTurnTimer(room)
+  room.status = 'lobby'
+  room.round = 1
+  room.turn = 0
+  room.deadline = null
+  room.turnMs = TURN_MS
   for (const p of room.players) {
-    p.done = false
+    p.sheet = emptySheet()
+    p.dice = [1, 2, 3, 4, 5]
+    p.kept = [false, false, false, false, false]
     p.rollsLeft = MAX_ROLLS
-    p.rolledThisRound = false
-    p.dice = [1, 1, 1, 1, 1]
+    p.rolled = false
+    p.total = 0
   }
 }
 
@@ -399,25 +614,50 @@ io.on('connection', (socket) => {
     if (rxCode) socket.to('rx:' + rxCode).emit('rx:left')
   })
 
-  /** 방 만들기 */
+  // ===== 요트 다이스 턴제 방 (room:*) =====
+  //  joinedCode = 내가 들어간 방 코드 / mySeat = 내 좌석 id(p1~p6)
+  let mySeat = null
+
+  /** 내 방/내 플레이어를 한 번에 (없으면 null) */
+  function ctx() {
+    const room = rooms.get(joinedCode)
+    if (!room) return null
+    const player = room.players.find((p) => p.id === mySeat)
+    if (!player) return null
+    return { room, player }
+  }
+
+  /** 지금 내 차례인가 (조작 요청을 받아 줄지 판단) */
+  function myTurn(room, player) {
+    return room.status === 'playing' && currentPlayer(room)?.id === player.id
+  }
+
+  /** 방 만들기 → 6자리 초대 코드 발급 + 바로 입장 */
   socket.on('room:create', (nickname, ack) => {
     const code = makeRoomCode()
+    const host = makePlayer('p1', nickname, socket.id)
     const room = {
       code,
-      hostId: socket.id,
+      hostId: host.id,
       status: 'lobby',
       round: 1,
+      turn: 0,
+      turnSeq: 0,
+      rollSeq: 0,
       deadline: null,
-      players: [makePlayer(socket.id, nickname)],
+      turnMs: TURN_MS,
+      timer: null,
+      players: [host],
     }
     rooms.set(code, room)
     socket.join(code)
     joinedCode = code
-    ack?.({ ok: true, code, youId: socket.id })
+    mySeat = host.id
+    ack?.({ ok: true, code, youId: host.id, token: host.token })
     broadcast(io, room)
   })
 
-  /** 입장코드로 참가 */
+  /** 초대 코드로 참가 */
   socket.on('room:join', (rawCode, nickname, ack) => {
     const code = String(rawCode || '').toUpperCase().trim()
     const room = rooms.get(code)
@@ -429,119 +669,189 @@ io.on('connection', (socket) => {
       ack?.({ ok: false, error: '이미 시작한 방이에요.' })
       return
     }
-    if (room.players.length >= 8) {
-      ack?.({ ok: false, error: '방이 가득 찼어요. (최대 8명)' })
+    const seat = room.players.length >= MAX_PLAYERS ? null : freeSeat(room)
+    if (!seat) {
+      ack?.({ ok: false, error: `방이 가득 찼어요. (최대 ${MAX_PLAYERS}명)` })
       return
     }
-    room.players.push(makePlayer(socket.id, nickname))
+    const p = makePlayer(seat, nickname, socket.id)
+    room.players.push(p)
     socket.join(code)
     joinedCode = code
-    ack?.({ ok: true, code, youId: socket.id })
+    mySeat = p.id
+    ack?.({ ok: true, code, youId: p.id, token: p.token })
+    broadcast(io, room)
+  })
+
+  /**
+   * 재접속 — 폰이 잠기거나 네트워크가 끊기면 소켓 id 가 바뀐다.
+   * 발급받은 token 으로 원래 좌석을 되찾는다 (게임 중에도 가능).
+   */
+  socket.on('room:rejoin', (rawCode, token, ack) => {
+    const code = String(rawCode || '').toUpperCase().trim()
+    const room = rooms.get(code)
+    if (!room) {
+      ack?.({ ok: false, error: '방이 사라졌어요.' })
+      return
+    }
+    const p = room.players.find((pl) => pl.token === token)
+    if (!p) {
+      ack?.({ ok: false, error: '자리를 찾을 수 없어요.' })
+      return
+    }
+    p.socketId = socket.id
+    p.connected = true
+    socket.join(code)
+    joinedCode = code
+    mySeat = p.id
+    ack?.({ ok: true, code, youId: p.id, token: p.token })
+    // 끊긴 사이 짧게 걸려 있던 제한시간을 원래대로 돌려준다
+    if (myTurn(room, p)) armTurnTimer(io, room)
     broadcast(io, room)
   })
 
   /** 게임 시작 (방장만) */
   socket.on('room:start', () => {
-    const room = rooms.get(joinedCode)
-    if (!room || room.hostId !== socket.id || room.status !== 'lobby') return
+    const c = ctx()
+    if (!c) return
+    const { room, player } = c
+    if (room.hostId !== player.id || room.status !== 'lobby') return
+    if (room.players.length < 1) return
+    resetRoom(room)
     room.status = 'playing'
-    room.round = 1
-    room.deadline = Date.now() + ROUND_MS
-    for (const p of room.players) {
-      p.sheet = emptySheet()
-      p.dice = [1, 1, 1, 1, 1]
-      p.rollsLeft = MAX_ROLLS
-      p.rolledThisRound = false
-      p.done = false
-      p.total = 0
-    }
+    beginTurn(io, room)
     broadcast(io, room)
   })
 
-  /** 굴리기 결과 보고 (클라가 로컬에서 굴린 주사위/남은횟수를 공유) */
-  socket.on('game:roll', ({ dice, rollsLeft } = {}) => {
-    const room = rooms.get(joinedCode)
-    if (!room || room.status !== 'playing') return
-    const p = room.players.find((pl) => pl.id === socket.id)
-    if (!p || p.done) return
-    if (Array.isArray(dice) && dice.length === 5) p.dice = dice.map((n) => Number(n) || 1)
-    if (typeof rollsLeft === 'number') p.rollsLeft = Math.max(0, Math.min(MAX_ROLLS, rollsLeft))
-    p.rolledThisRound = true
+  /** 굴리기 — 주사위는 서버가 굴린다 (모두가 같은 눈을 본다) */
+  socket.on('game:roll', () => {
+    const c = ctx()
+    if (!c) return
+    const { room, player } = c
+    if (!myTurn(room, player)) return
+    if (player.rollsLeft <= 0) return
+    rollDice(room, player)
     broadcast(io, room)
   })
 
-  /** 점수 확정 (categoryId 에 score 점 기록 → 이번 라운드 done) */
-  socket.on('game:score', ({ categoryId, score } = {}) => {
-    const room = rooms.get(joinedCode)
-    if (!room || room.status !== 'playing') return
-    const p = room.players.find((pl) => pl.id === socket.id)
-    if (!p || p.done) return
+  /** 주사위 고정/해제 (내 차례 · 한 번은 굴린 뒤에만) */
+  socket.on('game:keep', ({ index } = {}) => {
+    const c = ctx()
+    if (!c) return
+    const { room, player } = c
+    if (!myTurn(room, player) || !player.rolled) return
+    const i = Number(index)
+    if (!Number.isInteger(i) || i < 0 || i > 4) return
+    player.kept[i] = !player.kept[i]
+    broadcast(io, room)
+  })
+
+  /** 점수 확정 → 다음 사람 차례. 점수는 서버가 계산한다 */
+  socket.on('game:score', ({ categoryId } = {}) => {
+    const c = ctx()
+    if (!c) return
+    const { room, player } = c
+    if (!myTurn(room, player) || !player.rolled) return
     if (!ALL_CATEGORY_IDS.includes(categoryId)) return
-    if (p.sheet[categoryId] !== null) return // 이미 채운 칸
-
-    p.sheet[categoryId] = Number(score) || 0
-    p.total = computeTotal(p.sheet)
-    p.done = true
-
-    maybeAdvanceRound(room)
-    broadcast(io, room)
+    if (player.sheet[categoryId] !== null) return // 이미 채운 칸
+    applyScore(io, room, player, categoryId, false)
   })
 
   /** 리액션 → 방 전체에 중계 */
   socket.on('reaction:send', ({ type } = {}) => {
-    const room = rooms.get(joinedCode)
-    if (!room || !REACTION_TYPES.includes(type)) return
-    io.to(room.code).emit('reaction:recv', { playerId: socket.id, type })
+    const c = ctx()
+    if (!c || !REACTION_TYPES.includes(type)) return
+    io.to(c.room.code).emit('reaction:recv', { playerId: c.player.id, type })
   })
 
   /** 다시 하기 (방장만) → 대기실로 */
   socket.on('room:restart', () => {
-    const room = rooms.get(joinedCode)
-    if (!room || room.hostId !== socket.id) return
-    room.status = 'lobby'
-    room.round = 1
-    room.deadline = null
-    for (const p of room.players) {
-      p.sheet = emptySheet()
-      p.dice = [1, 1, 1, 1, 1]
-      p.rollsLeft = MAX_ROLLS
-      p.rolledThisRound = false
-      p.done = false
-      p.total = 0
-    }
+    const c = ctx()
+    if (!c) return
+    const { room, player } = c
+    if (room.hostId !== player.id) return
+    resetRoom(room)
     broadcast(io, room)
   })
 
-  /** 연결 종료 처리 */
+  /** 방에서 나가기 (허브로 돌아감) */
+  socket.on('room:leave', () => {
+    const c = ctx()
+    joinedCode = null
+    mySeat = null
+    if (!c) return
+    const { room, player } = c
+    socket.leave(room.code)
+    dropPlayer(io, room, player, true)
+  })
+
+  /** 연결 종료 — 자리는 남겨 두고(재접속 가능) 끊긴 것으로 표시 */
   socket.on('disconnect', () => {
-    const room = rooms.get(joinedCode)
-    if (!room) return
-    const p = room.players.find((pl) => pl.id === socket.id)
-    if (p) p.connected = false
-
-    // 대기실이면 아예 목록에서 제거
-    if (room.status === 'lobby') {
-      room.players = room.players.filter((pl) => pl.id !== socket.id)
-    }
-
-    // 방장이 나갔으면 남은 사람 중 첫 번째를 방장으로
-    if (room.hostId === socket.id) {
-      const next = room.players.find((pl) => pl.connected)
-      if (next) room.hostId = next.id
-    }
-
-    // 아무도 안 남았으면 방 삭제
-    const anyone = room.players.some((pl) => pl.connected)
-    if (!anyone) {
-      rooms.delete(room.code)
-      return
-    }
-
-    // 게임 중이었다면, 남은 사람들 기준으로 라운드 진행 여부 재확인
-    if (room.status === 'playing') maybeAdvanceRound(room)
-    broadcast(io, room)
+    const c = ctx()
+    if (!c) return
+    const { room, player } = c
+    // 이미 다른 소켓이 이 좌석을 되찾았다면(재접속) 건드리지 않는다
+    if (player.socketId !== socket.id) return
+    dropPlayer(io, room, player, false)
   })
 })
+
+/**
+ * 플레이어 이탈 처리.
+ *  - 대기실이거나 직접 나갔으면 자리에서 제거
+ *  - 게임 중 연결만 끊긴 거면 자리를 남겨 둔다 (token 으로 재접속)
+ *  - 방장이 빠지면 남은 사람 중 첫 번째가 방장
+ *  - 아무도 안 남으면 방 삭제
+ */
+function dropPlayer(io, room, player, explicit) {
+  const wasTurn = currentPlayer(room)?.id === player.id
+  player.connected = false
+
+  const remove = explicit || room.status !== 'playing'
+  let wrapped = false
+  if (remove) {
+    const at = room.players.indexOf(player)
+    room.players.splice(at, 1)
+    // 앞사람이 빠지면 차례 인덱스가 한 칸 밀린다
+    if (at < room.turn) room.turn -= 1
+    if (room.turn >= room.players.length) {
+      // 마지막 자리가 빠졌다 → 한 바퀴 돈 것으로 보고 다음 라운드로
+      room.turn = 0
+      wrapped = true
+    }
+  }
+
+  if (room.hostId === player.id) {
+    const next = room.players.find((p) => p.connected) ?? room.players[0]
+    if (next) room.hostId = next.id
+  }
+
+  if (!room.players.some((p) => p.connected)) {
+    clearTurnTimer(room)
+    rooms.delete(room.code)
+    return
+  }
+
+  // 게임 중에 차례인 사람이 빠졌다면 게임이 멈추지 않게 처리
+  if (room.status === 'playing') {
+    if (remove && wasTurn) {
+      // 그 자리가 사라졌으니 같은 인덱스에 온 다음 사람부터 (라운드 경계 반영)
+      if (wrapped) room.round += 1
+      if (room.round > TOTAL_ROUNDS) {
+        clearTurnTimer(room)
+        room.status = 'finished'
+        room.deadline = null
+        room.turnSeq += 1
+        io.to(room.code).emit('room:finished', { ranking: ranking(room) })
+      } else {
+        beginTurn(io, room)
+      }
+    } else if (wasTurn) {
+      armTurnTimer(io, room) // 짧게 기다린 뒤 서버가 대신 플레이
+    }
+  }
+  broadcast(io, room)
+}
 
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`[YORR] 서버 실행 중 → http://0.0.0.0:${PORT}`)
