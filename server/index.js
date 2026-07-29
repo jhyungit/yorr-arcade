@@ -491,6 +491,21 @@ io.on('connection', (socket) => {
     if (pairCode) socket.to('pair:' + pairCode).emit('disp:game', data)
   })
 
+  /* ── 요트 폰 컨트롤러 (양방향) ──
+     요트는 킵·점수 선택이 게임의 본체라 폰만으로 한 턴을 끝낼 수 있어야 한다.
+     그런데 폰은 페어링 방에 있어 게임 방의 상태를 모른다 → 노트북이 화면 상태를
+     내려보내고(disp:yacht), 폰은 조작을 올려보낸다(ctrl:keep/select/score/react).
+     서버는 내용을 모르고 중계만 한다. 규칙 판정은 노트북/게임서버 쪽에 그대로 남는다.
+     (client/src/games/yacht/ctrlProtocol.ts 에 규약이 정리돼 있다) */
+  socket.on('disp:yacht', (data) => {
+    if (pairCode) socket.to('pair:' + pairCode).emit('disp:yacht', data)
+  })
+  for (const ev of ['ctrl:keep', 'ctrl:select', 'ctrl:score', 'ctrl:react']) {
+    socket.on(ev, (data) => {
+      if (pairCode) socket.to('pair:' + pairCode).emit(ev, { ...data, player: pairPlayer })
+    })
+  }
+
   /** 노트북(리듬 스윙) → 폰: 매 박 신호 → 폰이 진동으로 비트를 손에 전달 */
   socket.on('game:beat', () => {
     if (pairCode) socket.to('pair:' + pairCode).emit('game:beat')

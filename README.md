@@ -43,6 +43,12 @@
 3. 폰이 컨트롤러 화면으로 바뀐다. **노트북이 고른 게임에 맞춰 폰 UI 도 같이 바뀐다**(`disp:game`)
 
 - **한 노트북에 폰 여러 대**를 붙일 수 있다 (퀵드로우는 2대면 폰끼리 결투)
+- **요트만 폰이 "양방향"이다.** 다른 게임은 폰이 휘두르기만 보내면 되지만, 요트는
+  킵·점수 선택이 게임의 본체라 그것만으로는 결국 노트북 마우스를 잡아야 한다.
+  그래서 노트북이 화면 상태를 폰에 내려보내고(`disp:yacht`) 폰이 조작을 올려보낸다
+  (`ctrl:keep`·`ctrl:select`·`ctrl:score`·`ctrl:react`) → **폰만으로 한 턴을 끝낼 수 있다.**
+  폰이 스스로 판정하지 않고 노트북에 "요청"만 하므로 두 화면이 어긋나지 않는다.
+  규약: [ctrlProtocol.ts](client/src/games/yacht/ctrlProtocol.ts)
 - 스윙 감지: `DeviceMotion` 가속도 크기가 **14 m/s²** 를 넘으면 스윙. 중력 성분은 저역통과로 빼고,
   히스테리시스로 한 번의 휘두름이 여러 번 잡히는 것을 막는다 →
   [useSwing.ts](client/src/games/pingpong/useSwing.ts)
@@ -101,6 +107,10 @@ YORR/
 │     │  │  ├─ dice3d.ts         #   3D 보드 (Three.js) — 펠트·월넛·골드
 │     │  │  ├─ DiceBoard.tsx     #   위 씬을 React 에 붙이는 껍데기 (탭 → 고정)
 │     │  │  ├─ ScoreCard.tsx     #   혼자 하기용 점수표
+│     │  │  ├─ useRollInput.ts    # ★굴리기 입력 일원화 (버튼·센서·폰) + 디바운스
+│     │  │  ├─ ctrlProtocol.ts    # ★폰 컨트롤러 규약 (노트북 ↔ 폰)
+│     │  │  ├─ useYachtController.ts # ★노트북 쪽: 상태 내려보내기 + 조작 받기
+│     │  │  ├─ PhoneController.tsx   # ★폰 쪽: 주사위·점수판 UI
 │     │  │  └─ YachtDice.tsx     #   혼자 하기 (12라운드)
 │     │  ├─ pingpong/            # ★핑퐁 스매시
 │     │  │  ├─ court.ts          #   코트 규격·공 궤적·판정 (순수 로직)

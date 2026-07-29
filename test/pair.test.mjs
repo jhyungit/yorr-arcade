@@ -53,6 +53,41 @@ try {
   ok(vibes.length === 1 && vibes[0].kind === 'dice', '폰이 진동 신호 수신', vibes)
   ok(vibes[0].player === undefined, 'player 미지정 = 모든 폰 대상', vibes[0])
 
+  ok.section('요트 양방향 — 노트북이 화면 상태를 폰에 내려보낸다')
+  /* 요트는 킵·점수 선택이 게임의 본체라 폰만으로 한 턴을 끝낼 수 있어야 한다.
+     폰은 페어링 방에 있어 게임 방 상태를 모르므로 노트북이 view 를 내려보낸다. */
+  let gotView = null
+  phone.on('disp:yacht', (v) => { gotView = v })
+  const view = {
+    turn: '정현', mine: true, round: 3, totalRounds: 12,
+    dice: [4, 4, 2, 6, 1], kept: [true, true, false, false, false],
+    rollsLeft: 2, rolled: true, tumbling: false, selected: null,
+    total: 41, deadline: 1234567890, canReact: true,
+    cells: [{ id: 'choice', label: '초이스', score: null, preview: 17 }],
+  }
+  laptop.emit('disp:yacht', view)
+  await sleep(150)
+  ok(gotView !== null, '폰이 화면 상태를 받는다')
+  ok(JSON.stringify(gotView) === JSON.stringify(view), 'view 가 그대로 전달된다 (주사위·킵·점수판)', gotView)
+
+  ok.section('요트 양방향 — 폰의 조작이 노트북으로 올라간다')
+  const acts = { keep: [], select: [], score: [], react: [] }
+  laptop.on('ctrl:keep', (d) => acts.keep.push(d))
+  laptop.on('ctrl:select', (d) => acts.select.push(d))
+  laptop.on('ctrl:score', (d) => acts.score.push(d))
+  laptop.on('ctrl:react', (d) => acts.react.push(d))
+
+  phone.emit('ctrl:keep', { index: 2 })
+  phone.emit('ctrl:select', { categoryId: 'fullHouse' })
+  phone.emit('ctrl:score', { categoryId: 'fullHouse' })
+  phone.emit('ctrl:react', { type: 'laugh' })
+  await sleep(200)
+  ok(acts.keep.length === 1 && acts.keep[0].index === 2, '킵 토글이 전달 (index=2)', acts.keep)
+  ok(acts.select.length === 1 && acts.select[0].categoryId === 'fullHouse', '점수 칸 선택이 전달', acts.select)
+  ok(acts.score.length === 1 && acts.score[0].categoryId === 'fullHouse', '기록 확정이 전달', acts.score)
+  ok(acts.react.length === 1 && acts.react[0].type === 'laugh', '리액션이 전달', acts.react)
+  ok(acts.keep[0].player === 1, '몇 번째 폰인지 실려 온다', acts.keep[0])
+
   ok.section('화면이 나가면 폰에 알린다')
   const bye = new Promise((r) => phone.once('display:disconnected', () => r(true)))
   laptop.disconnect()

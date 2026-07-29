@@ -5,6 +5,8 @@ import PlayerStrip, { seatColor } from '../components/PlayerStrip'
 import RoundTimer from '../components/RoundTimer'
 import ReactionDock from '../components/ReactionDock'
 import { notifyDiceLanded, useRollInput } from '../games/yacht/useRollInput'
+import { useYachtController } from '../games/yacht/useYachtController'
+import type { YachtView } from '../games/yacht/ctrlProtocol'
 import { useWakeLock } from '../lib/wakeLock'
 import { feedbackShake, feedbackThrow, unlockAudio } from '../lib/feedback'
 import { CATEGORIES, CategoryId, calloutHand, scoreFor } from '../game/yacht'
@@ -214,6 +216,47 @@ export default function PlayScreen({
     if (!isMyTurn || !rolled || tumbling) return
     onToggleKeep(index)
   }
+
+  /* ── 폰 컨트롤러 ──
+     요트는 킵·점수 선택이 게임의 본체라, 폰만으로 한 턴을 끝낼 수 있어야
+     노트북 마우스를 안 잡는다. 지금 화면 상태를 폰에 내려보내고 조작을 받는다.
+     조작은 여기서 기존 경로(서버)로 흘리므로 노트북·폰이 저절로 같은 상태가 된다. */
+  const phoneView: YachtView | null = phoneConnected
+    ? {
+        turn: active?.nickname ?? '',
+        mine: isMyTurn,
+        round: room.round,
+        totalRounds: room.totalRounds,
+        dice: boardValues,
+        kept: activeKept,
+        rollsLeft,
+        rolled,
+        tumbling,
+        selected,
+        total: you.total,
+        deadline: room.deadline,
+        canReact: true,
+        cells: CATEGORIES.map((c) => ({
+          id: c.id,
+          label: c.label,
+          score: you.sheet[c.id],
+          preview: canAssign && you.sheet[c.id] === null ? scoreFor(c.id, boardValues) : null,
+        })),
+      }
+    : null
+
+  useYachtController({
+    view: phoneView,
+    enabled: phoneConnected,
+    onKeep: toggleKeep,
+    onSelect: (id) => setSelected((cur) => (cur === id ? null : id)),
+    onScore: (id) => {
+      if (!canAssign || you.sheet[id] !== null) return
+      onScore(id)
+      setSelected(null)
+    },
+    onReact,
+  })
 
   const commit = () => {
     if (!selected || !canAssign) return

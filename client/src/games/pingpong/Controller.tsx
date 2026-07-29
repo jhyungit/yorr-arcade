@@ -3,6 +3,7 @@ import { socket } from '../../net/socket'
 import { answerLatencyPing } from '../../net/latency'
 import { useSwing } from './useSwing'
 import { canVibrate } from '../../lib/feedback'
+import PhoneController from '../yacht/PhoneController'
 
 /**
  * Controller — 폰을 "스윙 컨트롤러"로 사용하는 화면 (게임 공용)
@@ -210,7 +211,11 @@ export default function Controller({ initialCode }: ControllerProps) {
   }, [tiltOn, isSlasher, joined])
 
   return (
-    <div className="fixed inset-0 flex flex-col items-center bg-[#0a0e16] text-white px-6 py-8 select-none">
+    <div
+      className={`fixed inset-0 flex flex-col items-center select-none bg-[#0a0e16] text-white ${
+        isYacht ? 'px-3 py-3' : 'px-6 py-8'
+      }`}
+    >
       <div className="label-mono text-white/50">
         {isRhythm
           ? '리듬 스윙 · 컨트롤러'
@@ -224,9 +229,11 @@ export default function Controller({ initialCode }: ControllerProps) {
                   ? 'YORR · 컨트롤러'
                   : 'PING · PONG · 컨트롤러'}
       </div>
-      <div className="text-5xl mt-3 mb-1">
-        {isRhythm ? '🥁' : isReaction ? '🤠' : isSlasher ? '🗡️' : isYacht ? '🎲' : isIdle ? '🎮' : '🏓'}
-      </div>
+      {!isYacht && (
+        <div className="text-5xl mt-3 mb-1">
+          {isRhythm ? '🥁' : isReaction ? '🤠' : isSlasher ? '🗡️' : isIdle ? '🎮' : '🏓'}
+        </div>
+      )}
 
       {!joined ? (
         // ── 연결 전: 코드 입력 ──
@@ -251,8 +258,15 @@ export default function Controller({ initialCode }: ControllerProps) {
         </div>
       ) : (
         // ── 연결 후: 스윙 ──
-        <div className="w-full max-w-xs mt-4 flex flex-col items-center">
-          <p className="text-[#49e08a] text-sm mb-1">🟢 노트북에 연결됨</p>
+        <div
+          className={`flex w-full flex-col items-center ${
+            isYacht ? 'min-h-0 max-w-sm flex-1' : 'mt-4 max-w-xs'
+          }`}
+        >
+          <p className={`text-[#49e08a] ${isYacht ? 'text-[11px]' : 'text-sm mb-1'}`}>
+            🟢 노트북에 연결됨{isYacht ? ` · P${player}` : ''}
+          </p>
+          {!isYacht && (
           <p className="text-white/80 text-lg font-bold mb-5">
             {isRhythm
               ? '🥁 리듬 컨트롤러'
@@ -266,8 +280,19 @@ export default function Controller({ initialCode }: ControllerProps) {
                       ? `게임 선택을 기다리는 중… (P${player})`
                       : `플레이어 ${player}`}
           </p>
+          )}
 
-          {isSlasher ? (
+          {isYacht ? (
+            /* 요트: 킵·점수 선택까지 폰에서 해야 하므로 전용 화면으로 갈아탄다.
+               노트북이 보내 주는 상태(disp:yacht)를 그리고 조작을 올려보낸다.
+               센서(흔들기)는 위 useSwing 이 그대로 담당한다. */
+            <PhoneController
+              onSwing={() => {
+                socket.emit('ctrl:swing')
+                bump()
+              }}
+            />
+          ) : isSlasher ? (
             // ── 슬래셔: 폰을 검처럼 들고 휘둘러 조준(모션). 화면 스와이프 아님! ──
             <div className="w-full flex flex-col items-center">
               {!tiltOn ? (
@@ -369,8 +394,8 @@ export default function Controller({ initialCode }: ControllerProps) {
             </p>
           )}
 
-          {/* 스윙 시각 피드백 + 탭 대체 버튼 (슬래셔는 터치패드라 제외) */}
-          {!isSlasher && (
+          {/* 스윙 시각 피드백 + 탭 대체 버튼 (슬래셔·요트는 전용 UI 라 제외) */}
+          {!isSlasher && !isYacht && (
             <>
               <button
                 onClick={() => {

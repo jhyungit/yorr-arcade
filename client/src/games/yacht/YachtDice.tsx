@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import DiceBoard from './DiceBoard'
 import ScoreCard from './ScoreCard'
 import { notifyDiceLanded, useRollInput } from './useRollInput'
+import { useYachtController } from './useYachtController'
+import type { YachtView } from './ctrlProtocol'
 import { feedbackShake, feedbackThrow, unlockAudio } from '../../lib/feedback'
 import {
   CATEGORIES,
@@ -188,12 +190,15 @@ export default function YachtDice({
     [rolled, tumbling, values],
   )
 
-  const commit = () => {
-    if (!selected || !rolled || tumbling) return
-    const gained = scoreFor(selected, values)
-    const next: ScoreSheet = { ...sheet, [selected]: gained }
+  /* 기록 확정. 칸을 인자로 받는다 — 폰 컨트롤러가 "이 칸에 기록" 을 한 번에
+     요청할 수 있어야 하는데, setSelected 직후엔 state 가 아직 안 바뀌어서
+     selected 를 읽는 방식으로는 그 요청을 처리할 수 없다. */
+  const commitCategory = (id: CategoryId) => {
+    if (!rolled || tumbling || sheet[id] !== null) return
+    const gained = scoreFor(id, values)
+    const next: ScoreSheet = { ...sheet, [id]: gained }
     setSheet(next)
-    setJustScored(selected)
+    setJustScored(id)
     if (flashTimer.current) window.clearTimeout(flashTimer.current)
     flashTimer.current = window.setTimeout(() => setJustScored(null), 700)
 
@@ -213,6 +218,52 @@ export default function YachtDice({
     setRolled(false)
     setRollKey(0)
   }
+
+  /** 아래 큰 버튼용 — 지금 고른 칸으로 확정 */
+  const commit = () => {
+    if (selected) commitCategory(selected)
+  }
+
+  /* ── 폰 컨트롤러 ── 솔로에서도 폰으로 킵·기록까지 다 할 수 있게.
+     조작은 여기서 기존 로컬 state 로 흘리므로 노트북 화면과 저절로 같아진다. */
+  const phoneView: YachtView | null = phoneConnected
+    ? {
+        turn: '',
+        mine: !finished,
+        round,
+        totalRounds: CATEGORIES.length,
+        dice: values,
+        kept,
+        rollsLeft,
+        rolled,
+        tumbling,
+        selected,
+        total,
+        deadline: null, // 솔로는 제한시간 없음
+        canReact: false,
+        cells: CATEGORIES.map((c) => ({
+          id: c.id,
+          label: c.label,
+          score: sheet[c.id],
+          preview: sheet[c.id] === null ? preview(c.id) : null,
+        })),
+      }
+    : null
+
+  useYachtController({
+    view: phoneView,
+    enabled: phoneConnected,
+    onKeep: toggleKeep,
+    onSelect: (id) => {
+      if (sheet[id] !== null || !rolled || tumbling) return
+      setSelected((cur) => (cur === id ? null : id))
+    },
+    onScore: (id) => {
+      if (sheet[id] !== null || !rolled || tumbling) return
+      setSelected(id)
+      commitCategory(id)
+    },
+  })
 
   const restart = () => {
     setSheet(emptyScoreSheet())
