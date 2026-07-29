@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import DiceBoard from './DiceBoard'
 import ScoreCard from './ScoreCard'
-import { useMotionDice } from '../../hooks/useMotionDice'
-import { notifyDiceLanded, usePhoneRoll } from './usePhoneRoll'
+import { notifyDiceLanded, useRollInput } from './useRollInput'
 import { feedbackShake, feedbackThrow, unlockAudio } from '../../lib/feedback'
 import {
   CATEGORIES,
@@ -141,17 +140,12 @@ export default function YachtDice({
     return () => window.removeEventListener('keydown', onKey)
   }, [devRoll])
 
-  // 폰을 흔들어도 굴러간다 (센서). 굴리는 중엔 잠근다.
-  const { permission, requestPermission } = useMotionDice({
-    onShake: roll,
-    onThrow: roll,
-    enabled: motionOn && !tumbling && !finished,
-  })
-
-  // 노트북을 화면으로 쓰고 "페어링한 폰"을 흔드는 경로 (ctrl:swing)
-  usePhoneRoll({
-    onRoll: roll,
-    enabled: !tumbling && !finished && rollsLeft > 0,
+  /* 굴리기 입력 일원화 (버튼 · 이 기기 센서 · 페어링한 폰).
+     한 번의 흔들기 제스처가 onShake 를 여러 번 발생시키므로 디바운스가 필수다. */
+  const { requestRoll, permission, requestPermission } = useRollInput({
+    roll,
+    canRoll: !tumbling && !finished && rollsLeft > 0,
+    motionOn,
   })
 
   const enableMotion = async () => {
@@ -298,7 +292,7 @@ export default function YachtDice({
             </div>
 
             <button
-              onClick={mode === 'commit' ? commit : roll}
+              onClick={mode === 'commit' ? commit : requestRoll}
               disabled={mode === 'tumbling' || mode === 'pick' || finished}
               className={`yd-cta ${mode === 'commit' ? 'is-commit' : ''}`}
             >

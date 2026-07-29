@@ -76,9 +76,16 @@ try {
   ok(A.state.rollSeq === 0, 'p2 는 굴릴 수 없다', A.state.rollSeq)
 
   ok.section('굴리기 — 서버가 굴리고 모두가 같은 눈을 본다')
+  /* 폰 흔들기 센서(onShake)는 한 제스처로 이벤트를 2~4번(간격 120ms) 낸다.
+     그걸 굴리기 1회로 접지 못해 "3회 → 1회" 로 기회가 두 칸 날아갔던 버그의 회귀 테스트.
+     멀티에서는 남은 횟수가 서버 값이라, 왕복 지연 동안 중복이 그대로 통과했다. */
+  A.emit('game:roll')
+  A.emit('game:roll') // 같은 제스처가 만든 중복
   A.emit('game:roll')
   await until(() => A.state?.rollSeq === 1)
-  ok(A.state.players[0].rollsLeft === 2 && A.state.players[0].rolled === true, '남은 굴리기 2 · rolled')
+  await sleep(250) // 뒤늦게 처리되는 중복이 없는지 확인할 시간
+  ok(A.state.rollSeq === 1, '중복 요청 3건이 굴리기 1회로 접힌다', A.state.rollSeq)
+  ok(A.state.players[0].rollsLeft === 2 && A.state.players[0].rolled === true, '기회는 하나만 줄어든다 (3→2)', A.state.players[0].rollsLeft)
   const dice1 = A.state.players[0].dice
   ok(dice1.length === 5 && dice1.every((d) => d >= 1 && d <= 6), '주사위 5개 1~6', dice1)
   await until(() => B.state?.rollSeq === 1 && C.state?.rollSeq === 1)
@@ -101,12 +108,14 @@ try {
   ok(A.state.players[0].kept[3] === false, '남이 내 주사위를 고정할 수 없다')
 
   const keptFaces = [dice1[0], dice1[1]]
+  await sleep(400) // 실제 플레이는 굴리는 연출 때문에 이보다 느리다
   A.emit('game:roll')
   await until(() => A.state?.rollSeq === 2)
   const dice2 = A.state.players[0].dice
   ok(dice2[0] === keptFaces[0] && dice2[1] === keptFaces[1], '고정한 두 개는 그대로', [dice2, keptFaces])
 
   ok.section('굴리기는 3번까지')
+  await sleep(400)
   A.emit('game:roll')
   await until(() => A.state?.rollSeq === 3)
   ok(A.state.players[0].rollsLeft === 0, '3번 다 씀')
@@ -128,6 +137,7 @@ try {
   ok.section('없는 족보 / 라운드 넘김')
   B.emit('game:roll')
   await until(() => B.state?.players[1].rolled === true)
+  await sleep(100)
   B.emit('game:score', { categoryId: 'nope' })
   await sleep(150)
   ok(A.state.turnId === 'p2', '없는 족보는 무시')
@@ -160,6 +170,7 @@ try {
     const s = clients[turnId]
     const p = A.state.players.find((x) => x.id === turnId)
     const seq = A.state.rollSeq
+    await sleep(380) // 서버의 중복 방지 간격(350ms)보다 크게
     s.emit('game:roll')
     await until(() => A.state.rollSeq > seq)
     const t = A.state.turnSeq

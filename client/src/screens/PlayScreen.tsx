@@ -4,8 +4,7 @@ import ScoreBoard from '../components/ScoreBoard'
 import PlayerStrip, { seatColor } from '../components/PlayerStrip'
 import RoundTimer from '../components/RoundTimer'
 import ReactionDock from '../components/ReactionDock'
-import { useMotionDice } from '../hooks/useMotionDice'
-import { notifyDiceLanded, usePhoneRoll } from '../games/yacht/usePhoneRoll'
+import { notifyDiceLanded, useRollInput } from '../games/yacht/useRollInput'
 import { useWakeLock } from '../lib/wakeLock'
 import { feedbackShake, feedbackThrow, unlockAudio } from '../lib/feedback'
 import { CATEGORIES, CategoryId, calloutHand, scoreFor } from '../game/yacht'
@@ -202,16 +201,14 @@ export default function PlayScreen({
     onRoll() // 실제 눈은 서버가 정한다 → room.rollSeq 로 되돌아온다
   }, [canRoll, onRoll])
 
-  // 센서(흔들기)로도 굴린다 — 내 차례가 아니면 아예 안 듣는다
-  const { permission, requestPermission } = useMotionDice({
-    onShake: roll,
-    onThrow: roll,
-    enabled: motionOn && canRoll,
+  /* 굴리기 입력 일원화 — 버튼·이 기기 센서·페어링한 폰 흔들기가 모두
+     requestRoll 하나를 거친다. 디바운스가 여기 한 곳에만 있으면 된다.
+     (예전엔 세 갈래가 각자 roll() 을 불러서 한 번 흔들기에 기회가 2개 날아갔다) */
+  const { requestRoll, permission, requestPermission } = useRollInput({
+    roll,
+    canRoll,
+    motionOn,
   })
-
-  // 노트북을 화면으로 쓰고 "페어링한 폰"을 흔드는 경로 (ctrl:swing).
-  // canRoll 이 내 차례·굴리기 남음·구르는 중 아님을 이미 다 본다.
-  usePhoneRoll({ onRoll: roll, enabled: canRoll })
 
   const toggleKeep = (index: number) => {
     if (!isMyTurn || !rolled || tumbling) return
@@ -345,7 +342,7 @@ export default function PlayScreen({
             </div>
 
             <button
-              onClick={mode === 'commit' ? commit : roll}
+              onClick={mode === 'commit' ? commit : requestRoll}
               disabled={mode === 'wait' || mode === 'tumbling' || mode === 'pick'}
               aria-label={ctaText}
               className={`yd-cta ${mode === 'commit' ? 'is-commit' : ''}`}

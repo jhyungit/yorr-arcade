@@ -57,6 +57,13 @@ const AFK_TURN_MS = 8000
 // 자동으로 굴린 뒤 "구르는 걸 볼 시간"을 주고 나서 기록한다
 const AUTO_ROLL_VIEW_MS = 2600
 
+/* 같은 차례에서 굴리기 요청이 이보다 촘촘히 오면 중복으로 보고 무시한다.
+   폰 흔들기 센서는 한 번의 제스처로 이벤트를 2~4번(간격 120ms) 발생시킨다.
+   클라이언트에도 디바운스가 있지만(useRollInput), 남은 횟수는 서버가 가진 값이라
+   여기서도 막아 두지 않으면 클라 버그 하나로 기회가 통째로 날아간다.
+   굴리는 연출이 1.5~3.2초라 정상 플레이가 이 간격에 걸릴 일은 없다. */
+const MIN_ROLL_GAP_MS = 350
+
 // code -> Room
 const rooms = new Map()
 
@@ -200,6 +207,7 @@ function makePlayer(seatId, nickname, socketId) {
     kept: [false, false, false, false, false], // 남기기로 한 주사위
     rollsLeft: MAX_ROLLS,
     rolled: false, // 이번 차례에 한 번이라도 굴렸는가
+    lastRollAt: 0, // 중복 굴리기 요청을 걸러내기 위한 시각
     total: 0,
   }
 }
@@ -297,12 +305,14 @@ function beginTurn(io, room) {
   p.kept = [false, false, false, false, false]
   p.rollsLeft = MAX_ROLLS
   p.rolled = false
+  p.lastRollAt = 0
   room.turnSeq += 1
   armTurnTimer(io, room)
 }
 
 /** 실제로 굴린다 — kept 인 주사위는 그대로, 나머지만 새로 */
 function rollDice(room, p) {
+  p.lastRollAt = Date.now()
   p.dice = p.dice.map((v, i) => (p.kept[i] ? v : 1 + Math.floor(Math.random() * 6)))
   p.rollsLeft = Math.max(0, p.rollsLeft - 1)
   p.rolled = true
@@ -730,6 +740,8 @@ io.on('connection', (socket) => {
     const { room, player } = c
     if (!myTurn(room, player)) return
     if (player.rollsLeft <= 0) return
+    // 한 번의 흔들기가 만든 중복 요청 — 조용히 무시 (기회를 먹지 않는다)
+    if (Date.now() - player.lastRollAt < MIN_ROLL_GAP_MS) return
     rollDice(room, player)
     broadcast(io, room)
   })
