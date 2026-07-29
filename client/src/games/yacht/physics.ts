@@ -20,26 +20,57 @@ export const X_HALF = 1.3 // 펠트 가로 절반
 export const Z_HALF = 1.0 // 펠트 세로 절반
 export const RAIL_D = 0.44 // 앞쪽 KEEP 레일 깊이
 export const PLAY_Z = Z_HALF - RAIL_D // 굴리는 영역의 앞 경계 (보이지 않는 벽이 선다)
-export const WALL_H = 0.3 // 테두리 높이
+export const WALL_H = 0.3 // 테두리 높이 (보이는 나무 테두리)
+/* 판 안에 들어온 주사위를 막는 "보이지 않는 높은 벽".
+   보이는 테두리는 0.3 뿐이라 그보다 높이 튀면 판 밖으로 날아가 버린다.
+   착지 이후 높이를 재 보면 99% 가 0.43 아래, 최대 0.65 이다. 1.0 이면 넉넉히 막으면서
+   "벽에 닿는 순간의 높이" 중앙값은 0.17 밖에 안 돼서 허공에서 튕기는 것처럼 보이지 않는다
+   (테두리보다 확실히 높은 데서 벽에 닿는 경우가 전체 벽 접촉의 0.3%). */
+export const WALL_H_IN = 1.0
 export const RIM = 0.16 // 나무 테두리 두께
 export const KEEP_Z = Z_HALF - RAIL_D / 2 // 고정된 주사위가 놓이는 줄
 export const KEEP_GAP = 0.42 // 고정 슬롯 간격
 export const FLAT = H * 1.45 // 눕힌 주사위의 실효 반지름 (대각선 포함)
 
-/* ── 손맛 상수 (여기만 만지면 굴러가는 느낌이 바뀐다) ── */
+/* ── 손맛 상수 (여기만 만지면 굴러가는 느낌이 바뀐다) ──
+   이 파일은 노드에서 그냥 돌려 볼 수 있으니, 느낌을 눈대중으로 맞추지 말고 재서 맞춘다.
+   500판을 돌려 본 기준값:
+
+                     구르는시간  이동거리  반대쪽벽  초반회전  회전상한   판밖이탈
+     ① 처음            1.08초     1.43     거의못감   11.3     없음(100)   있었음
+     ② 너무 굴린 판     1.59초     2.63     96%       19.9     40          있었음
+     ③ 지금(①②중간)    1.52초     2.58     83%       15.5     24          0%
+
+   배운 것 세 가지:
+   1) "던지자마자 멈춘다" 의 원인은 던지는 세기가 아니라 감쇠였다 (LIN/ANG_DAMP).
+   2) 회전 체감은 최고 회전수가 아니라 "초반 0.6초의 평균 회전" 이 정한다.
+      ①은 순간 100rad/s 까지 튀지만 감쇠가 세서 금방 죽어 오히려 느리게 느껴졌다.
+      그리고 초반 구간은 대부분 상한에 붙어 있으므로 체감은 MAX_W 가 지배한다
+      (ANG_DAMP 를 0.62→1.1 로 올려도 초반회전은 15.5→14.9 밖에 안 변한다).
+   3) 이동 감쇠와 회전 감쇠를 따로 두면 "오래 굴러가되 팽이처럼은 안 돌게" 를 맞출 수 있다.
+   판 가로가 2.6 이므로 이동거리 2.58 은 "한 번 건너가서 되튀는" 정도.
+   구름비율(|w|·H/|v|) 은 0.90 으로 미끄러지지 않고 제대로 굴러간다(1 이면 무슬립). */
 export const STEP = 1 / 120 // 고정 시간 간격
-export const MAX_SIM = 1.5 // 아무리 늦어도 여기서 끊고 안착시킨다 (초)
-const G = 26 // 중력 — 실제보다 낮게. 굴러가는 게 눈에 읽혀야 한다
-const E_FLOOR = 0.36 // 펠트 반발 (천이라 잘 안 튄다)
-const E_WALL = 0.46 // 나무 벽 반발
+export const MAX_SIM = 3.2 // 아무리 늦어도 여기서 끊고 안착시킨다 (초)
+const G = 18.5 // 중력 — 실제보다 낮게. 체공이 길어 굴러가는 게 눈에 읽힌다
+const E_FLOOR = 0.4 // 펠트 반발 (천이라 잘 안 튄다) — 높이면 붕붕 떠서 가짜 같다
+const E_WALL = 0.56 // 나무 벽 반발 — 되튀어야 판을 왕복한다
 const REST_SPEED = 0.7 // 이보다 느리게 닿으면 반발 없음 (미세하게 계속 튀는 것 방지)
-const MU = 0.44 // 마찰
-const LIN_DAMP = 0.8
-const ANG_DAMP = 1.2
+const MU = 0.52 // 마찰 — 높이면 미끄러지는 대신 굴러 넘어간다(모서리 텀블)
+/* 감쇠는 "공기저항" 이라기보다 연출용 브레이크다. 세게 걸면 한 번 튀고 죽는다.
+   이동(LIN)과 회전(ANG)을 따로 두는 게 요점: "오래 굴러가되 팽이처럼 돌지는 않게"
+   하려면 이동 감쇠는 낮게 유지하고 회전 감쇠만 올려야 한다.
+   회전은 1.2(너무 빨리 죽어 안 구르는 느낌) ↔ 0.22(너무 팽팽 돎) 의 가운데. */
+const LIN_DAMP = 0.08
+const ANG_DAMP = 0.62
 const INV_I = 6 / (DIE * DIE) // 정육면체 관성 역수 (질량 1, 축 무관)
-const SLEEP_V = 0.11
-const SLEEP_W = 0.6
-const SLEEP_HOLD = 0.12 // 이만큼 조용하면 잠든 것으로 본다
+const SLEEP_V = 0.085
+const SLEEP_W = 0.42 // 눈에 보이게 돌고 있는데 잠들면 "덜 굴렀다" 는 느낌이 된다
+const SLEEP_HOLD = 0.16 // 이만큼 조용하면 잠든 것으로 본다
+/* 회전 상한. 상한이 없으면 충돌 직후 순간적으로 95rad/s(15회전/초)까지 뛰는데,
+   60fps 에서 한 프레임에 90° 넘게 돌면 눈에는 회전이 아니라 깜빡임으로 보인다.
+   24 = 3.8회전/초 ≈ 한 프레임 23°. 빠르지만 어느 면이 오는지 눈으로 따라갈 수 있다. */
+const MAX_W = 24
 
 /* 바닥에 눕고 나서의 추가 감쇠 — 없으면 영원히 제자리에서 돈다.
    꼭짓점 임펄스를 순서대로 풀다 보면 (중심이 조금씩 밀리므로) 네 꼭짓점의
@@ -47,8 +78,8 @@ const SLEEP_HOLD = 0.12 // 이만큼 조용하면 잠든 것으로 본다
    그 펌핑이 일반 감쇠와 평형을 이뤄 ω≈3rad/s 로 계속 도는 한계주기가 생긴다.
    → "세 꼭짓점 이상이 바닥에 닿아 있고 거의 안 움직이면" 강하게 붙잡는다. */
 const REST_CONTACTS = 3
-const REST_V = 0.6
-const REST_DAMP = 0.86
+const REST_V = 0.45 // 여기까지 느려지기 전엔 안 잡는다 (마지막 미끄러짐을 살린다)
+const REST_DAMP = 0.94 // 0.86 은 0.1초만에 딱 멈춰 버렸다. 부드럽게 잦아들도록 완화
 const CONTACT_EPS = 0.004 // 이만큼 바닥에 붙어 있으면 닿은 것으로 센다
 
 /* ── 눈 배치: BoxGeometry 재질 순서(+x,-x,+y,-y,+z,-z) 와 1:1. 마주보는 합 = 7 ── */
@@ -84,6 +115,9 @@ export interface Body {
   active: boolean // 지금 물리를 받는가 (고정된 주사위는 false)
   asleep: boolean
   sleepT: number
+  /** 판 안으로 들어왔는가 — 들어온 뒤엔 높은 벽으로 막아 다시 못 나가게 한다.
+   *  (들어오는 순간엔 오른쪽 테두리 위를 넘어야 하므로 벽이 낮아야 한다) */
+  inside: boolean
 }
 
 export function makeBody(): Body {
@@ -95,6 +129,7 @@ export function makeBody(): Body {
     active: false,
     asleep: true,
     sleepT: 0,
+    inside: false,
   }
 }
 
@@ -107,12 +142,16 @@ export function makeBody(): Body {
 export function throwInto(b: Body, k: number, n: number) {
   const spread = n > 1 ? (k / (n - 1)) * 2 - 1 : 0 // -1 ~ 1
   b.p.set(X_HALF + 0.24 + k * 0.05, rand(0.56, 0.72), spread * 0.42 + rand(-0.06, 0.06))
-  b.v.set(rand(-4.4, -3.7), rand(0.25, 0.5), rand(-0.5, 0.5) - spread * 0.6)
-  b.w.set(rand(-16, 16), rand(-14, 14), rand(-22, -9))
+  // 판 가로(2.6)를 한 번 건너갈 만큼은 세게, 테두리를 넘어 날아갈 만큼은 아니게.
+  // 위로(+y) 주는 성분을 줄인 것도 정점을 낮추려는 것 (테두리가 0.3 뿐이다)
+  b.v.set(rand(-6.2, -5.4), rand(0.1, 0.3), rand(-0.45, 0.45) - spread * 0.55)
+  // 초기 회전도 ±22/±19/-30~-13 은 너무 팽팽했다 → 옛 값(±16/±14/-22~-9)과의 가운데
+  b.w.set(rand(-19, 19), rand(-16, 16), rand(-26, -11))
   b.q.set(Math.random(), Math.random(), Math.random(), Math.random()).normalize()
   b.active = true
   b.asleep = false
   b.sleepT = 0
+  b.inside = false // 아직 테두리 밖 — 넘어 들어오는 중
 }
 
 /* 매 스텝 재사용하는 임시값 — 서로 덮어쓰면 조용히 틀린 물리가 되므로 용도를 고정한다 */
@@ -235,6 +274,19 @@ export function stepBodies(bodies: Body[], dt: number): number {
     dq.set(b.w.x * dt * 0.5, b.w.y * dt * 0.5, b.w.z * dt * 0.5, 0).multiply(b.q)
     b.q.set(b.q.x + dq.x, b.q.y + dq.y, b.q.z + dq.z, b.q.w + dq.w).normalize()
 
+    /* 판 안에 완전히 들어왔으면 표시해 둔다 — 이 뒤로는 높은 벽이 선다.
+       이게 없으면 세게 던진 주사위가 테두리(0.3)보다 높이 튀어올라 판 밖으로
+       날아갔다가 다시 떨어져 들어온다. 물리적으로는 맞지만 보기에는 "맵을 뚫었다". */
+    if (
+      !b.inside &&
+      Math.abs(b.p.x) < X_HALF - H &&
+      b.p.z < PLAY_Z - H &&
+      b.p.z > -Z_HALF + H
+    ) {
+      b.inside = true
+    }
+    const wallTop = b.inside ? WALL_H_IN : WALL_H
+
     // 꼭짓점 8개로 바닥·벽 접촉을 모아 한 번에 푼다
     for (let i = 0; i < 8; i++) corners[i].copy(CORNER_LOCAL[i]).applyQuaternion(b.q)
     let support = 0
@@ -244,7 +296,7 @@ export function stepBodies(bodies: Body[], dt: number): number {
       const y = b.p.y + r.y
       if (y < CONTACT_EPS) support++
       if (y < 0) addContact(b, UP, -y, E_FLOOR, r)
-      if (y > WALL_H) continue // 벽보다 높으면 넘어 들어오는 중
+      if (y > wallTop) continue // 벽보다 높으면 넘어 들어오는 중
       const x = b.p.x + r.x
       if (x > X_HALF) addContact(b, N_LEFT, x - X_HALF, E_WALL, r)
       else if (x < -X_HALF) addContact(b, N_RIGHT, -X_HALF - x, E_WALL, r)
@@ -304,6 +356,14 @@ export function stepBodies(bodies: Body[], dt: number): number {
         if (s > impact) impact = s
       }
     }
+  }
+
+  /* 회전 상한은 맨 마지막에 한 번만. 위 주사위끼리 충돌이 회전을 더 얹기 때문에
+     몸별 루프 안에서 자르면 그게 다시 넘어간다 (측정: 40 상한인데 83까지 나왔다). */
+  for (const b of bodies) {
+    if (!b.active || b.asleep) continue
+    const wl = b.w.length()
+    if (wl > MAX_W) b.w.multiplyScalar(MAX_W / wl)
   }
 
   return impact
@@ -382,6 +442,7 @@ export function snapshot(bodies: Body[]): Body[] {
     active: b.active,
     asleep: b.asleep,
     sleepT: b.sleepT,
+    inside: b.inside, // 빠뜨리면 되감은 뒤 벽 높이가 달라져 궤적이 어긋난다
   }))
 }
 
@@ -394,6 +455,7 @@ export function restore(bodies: Body[], snap: Body[]) {
     b.active = snap[i].active
     b.asleep = snap[i].asleep
     b.sleepT = snap[i].sleepT
+    b.inside = snap[i].inside
   })
 }
 

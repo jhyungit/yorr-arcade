@@ -249,6 +249,9 @@ interface Die {
   /** 라벨 회전 — 물리에는 없고 그릴 때만 곱한다 (mesh.q = body.q · label).
    *  정육면체 대칭이라 궤적을 바꾸지 않으면서 "어느 눈이 위로 오는지"만 정한다. */
   label: THREE.Quaternion
+  /** 한 스텝 전의 자세 — 그릴 때 현재와 보간해 부드럽게 만든다(물리는 안 건드림) */
+  prevP: THREE.Vector3
+  prevQ: THREE.Quaternion
   kept: boolean
   blending: boolean
   p0: THREE.Vector3
@@ -417,6 +420,8 @@ export function createScene(canvas: HTMLCanvasElement, opts: DiceSceneOptions): 
       mesh,
       body: makeBody(),
       label: new THREE.Quaternion(),
+      prevP: new THREE.Vector3(),
+      prevQ: new THREE.Quaternion(),
       kept: false,
       blending: false,
       p0: new THREE.Vector3(),
@@ -480,7 +485,10 @@ export function createScene(canvas: HTMLCanvasElement, opts: DiceSceneOptions): 
           H,
           clamp(d.body.p.z, -Z_HALF + FLAT, PLAY_Z - FLAT),
         )
-        beginBlend(d, tmpP, tmpQ, FLATTEN_MS, 0)
+        /* 많이 기운 놈은 더 오래 걸려 눕는다 — 같은 시간에 눕히면 큰 각도(측정상 최대 50°)가
+           툭 꺾이는 스냅으로 보인다. 각도에 비례해 늘리면 "모서리에서 천천히 넘어가는" 모양. */
+        const dur = FLATTEN_MS * (1 + (tilt / FLATTEN_MAX) * 1.6)
+        beginBlend(d, tmpP, tmpQ, dur, 0)
       }
     })
     phase = 'settling'
@@ -535,13 +543,19 @@ export function createScene(canvas: HTMLCanvasElement, opts: DiceSceneOptions): 
     layoutKept(false)
     rolling.forEach((i, k) => throwInto(dice[i].body, k, rolling.length))
 
-    // ① 화면에 그리지 않고 끝까지 한 번 굴려 본다 (5알 × 1.5초 ≈ 2~3ms)
+    // ① 화면에 그리지 않고 끝까지 한 번 굴려 본다 (5알 × 1.8초, 실측 평균 0.9ms · 최악 10ms)
     const snap = snapshot(bodies)
     simulate(bodies)
     // ② 그 자세에서 목표 눈이 위로 오도록 라벨을 정한다
     rolling.forEach((i, k) => dice[i].label.copy(labelFor(dice[i].body.q, rollValues[k])))
     // ③ 되감아 진짜로 굴린다. 정육면체 대칭이라 궤적은 ①과 완전히 같다 → 스냅 0
     restore(bodies, snap)
+
+    // 보간 기준점을 지금 자세로 맞춰 둔다 (안 하면 첫 프레임이 옛 자세에서 늘어난다)
+    for (const d of dice) {
+      d.prevP.copy(d.body.p)
+      d.prevQ.copy(d.body.q)
+    }
 
     phase = 'rolling'
     simT = 0
@@ -576,7 +590,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: DiceSceneOptions): 
     })
     layoutKept(false)
     phase = 'idle'
-    syncMeshes()
+    syncMeshes(1) // 즉시 배치 — 보간 없이 최종 자세로
   }
 
   function setKept(kept: boolean[]) {
@@ -604,16 +618,33 @@ export function createScene(canvas: HTMLCanvasElement, opts: DiceSceneOptions): 
     return dice.findIndex((d) => d.mesh === hits[0].object)
   }
 
-  function syncMeshes() {
+  /**
+   * 물리 상태를 메시에 옮긴다.
+   * -------------------------------------------------------------
+   * alpha 는 "마지막 스텝을 얼마나 지나왔는가"(0~1). 물리는 120Hz 고정 간격으로
+   * 도는데 화면은 60Hz(또는 폰이면 그때그때)라, 프레임마다 밟는 스텝 수가
+   * 2·2·3·2·1… 로 들쭉날쭉해진다. 그 편차가 빠르게 도는 주사위에서 떨림으로 보인다.
+   * → 직전 스텝과 현재 스텝 사이를 alpha 로 보간해서 그린다.
+   *   물리값(body)은 건드리지 않으므로 "미리 굴려 본 결과"와 어긋나지 않는다.
+   */
+  function syncMeshes(alpha: number) {
     for (const d of dice) {
-      d.mesh.position.copy(d.body.p)
-      d.mesh.quaternion.multiplyQuaternions(d.body.q, d.label)
+      if (alpha >= 1) {
+        d.mesh.position.copy(d.body.p)
+        d.mesh.quaternion.multiplyQuaternions(d.body.q, d.label)
+      } else {
+        d.mesh.position.lerpVectors(d.prevP, d.body.p, alpha)
+        tmpQ.slerpQuaternions(d.prevQ, d.body.q, alpha)
+        d.mesh.quaternion.multiplyQuaternions(tmpQ, d.label)
+      }
     }
   }
 
   function frame(dtMs: number) {
     const dt = Math.min(dtMs, 60) / 1000
     let impact = 0
+    // 굴러가는 동안만 보간한다. 블렌드(안착·고정 이동)는 자기 이징이 있으니 그대로.
+    let alpha = 1
 
     if (phase === 'rolling') {
       acc += dt
@@ -621,12 +652,18 @@ export function createScene(canvas: HTMLCanvasElement, opts: DiceSceneOptions): 
       // 미리 굴리기(simulate)와 완전히 같은 스텝 수를 밟아야 결과가 같다.
       // → 프레임 단위가 아니라 매 스텝마다 같은 판정(rollFinished)을 쓴다.
       while (acc >= STEP && guard++ < 12 && !rollFinished(bodies, simT)) {
+        // 스텝을 밟기 직전 자세를 "이전"으로 남긴다 (보간 기준점)
+        for (const d of dice) {
+          d.prevP.copy(d.body.p)
+          d.prevQ.copy(d.body.q)
+        }
         acc -= STEP
         const s = stepBodies(bodies, STEP)
         simT += STEP
         if (s > impact) impact = s
       }
       if (rollFinished(bodies, simT)) beginSettle()
+      else alpha = clamp(acc / STEP, 0, 1)
     }
 
     // 블렌드 (안착 · 고정 이동)
@@ -649,7 +686,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: DiceSceneOptions): 
     }
     if (impact > 0.12) opts.onImpact(impact)
 
-    syncMeshes()
+    syncMeshes(alpha)
     renderer.render(scene, camera)
   }
 
