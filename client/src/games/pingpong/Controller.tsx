@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { socket } from '../../net/socket'
 import { answerLatencyPing } from '../../net/latency'
 import { useSwing } from './useSwing'
-import { canVibrate } from '../../lib/feedback'
+import { canVibrate, feedbackDiceLand, unlockAudio } from '../../lib/feedback'
 import PhoneController from '../yacht/PhoneController'
 
 /**
@@ -70,6 +70,7 @@ export default function Controller({ initialCode }: ControllerProps) {
 
   // ── 슬래셔 모션 조준: 폰 기울기(deviceorientation) 권한 요청 + 켜기 ──
   const enableTilt = async () => {
+    unlockAudio()
     try {
       const DOE = DeviceOrientationEvent as unknown as {
         requestPermission?: () => Promise<'granted' | 'denied'>
@@ -110,6 +111,8 @@ export default function Controller({ initialCode }: ControllerProps) {
     const onHit = (d?: { player?: number; kind?: string }) => {
       // player 를 지정하지 않은 신호는 "모든 폰" 대상 (요트 주사위 착지 등)
       if (d?.player != null && d.player !== playerRef.current) return
+      // 주사위 착지는 진동이 없는 기기(아이폰)에서도 알 수 있게 소리로 대체
+      if (d?.kind === 'dice' && !canVibrate) return feedbackDiceLand()
       if (!canVibrate) return
       if (d?.kind === 'dice') navigator.vibrate([0, 24, 30, 46])
       else if (d?.kind === 'smash') navigator.vibrate([0, 60, 40, 120])
@@ -138,6 +141,9 @@ export default function Controller({ initialCode }: ControllerProps) {
   }, [])
 
   const join = () => {
+    // iOS 는 사용자 제스처 안에서 한 번 깨워 두지 않으면 이후 소리가 안 난다.
+    // 요트 "내 차례" 알림은 아이폰에서 소리가 유일한 신호라 여기서 미리 깨운다.
+    unlockAudio()
     setError(null)
     socket.emit('pair:join', code, (ack: { ok: boolean; error?: string; player?: number }) => {
       if (ack.ok) {
@@ -166,6 +172,7 @@ export default function Controller({ initialCode }: ControllerProps) {
   }, [joined])
 
   const enableMotion = async () => {
+    unlockAudio()
     await requestPermission()
     setMotionOn(true)
   }

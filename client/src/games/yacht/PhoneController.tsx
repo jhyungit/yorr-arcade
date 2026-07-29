@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { socket } from '../../net/socket'
-import { canVibrate } from '../../lib/feedback'
+import { canVibrate, feedbackTurn, setSoundEnabled, unlockAudio } from '../../lib/feedback'
 import { REACTION_EMOJI, type ReactionType } from '../../net/types'
 import {
   YACHT_KEEP,
@@ -92,6 +92,10 @@ function Die({ value, kept, disabled, onTap }: {
 export default function PhoneController({ onSwing }: { onSwing: () => void }) {
   const [view, setView] = useState<YachtView | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  /* 알림 소리 on/off. 아이폰은 진동이 없어 소리가 유일한 알림이라 기본은 켜 두고,
+     조용한 데서 플레이할 때 끌 수 있게 한다. */
+  const [soundOn, setSoundOn] = useState(true)
+  const [flash, setFlash] = useState(0) // 내 차례 플래시 (키를 바꿔 애니메이션 재생)
   const wasMine = useRef(false)
 
   // 노트북이 보내 주는 화면 상태 수신
@@ -110,13 +114,19 @@ export default function PhoneController({ onSwing }: { onSwing: () => void }) {
     return () => window.clearInterval(id)
   }, [view?.deadline])
 
-  /* 내 차례가 되는 순간 진동 — 폰을 손에 들고 노트북을 보고 있을 때
-     "이제 네 차례"를 눈이 아니라 손으로 알려 준다. 턴제에서 제일 아쉬운 부분. */
+  /* 내 차례가 되는 순간 알림 — 폰을 손에 들고 노트북을 보는 자세라
+     화면 표시만으로는 놓친다. 진동 + 소리 + 화면 플래시를 같이 준다.
+     아이폰은 웹 진동이 없으므로(크롬도 동일) 소리·플래시가 유일한 알림이다. */
   useEffect(() => {
     const mine = !!view?.mine
-    if (mine && !wasMine.current && canVibrate) navigator.vibrate([0, 70, 50, 70])
+    if (mine && !wasMine.current) {
+      feedbackTurn()
+      setFlash((n) => n + 1)
+    }
     wasMine.current = mine
   }, [view?.mine])
+
+  useEffect(() => setSoundEnabled(soundOn), [soundOn])
 
   if (!view) {
     return (
@@ -257,6 +267,21 @@ export default function PhoneController({ onSwing }: { onSwing: () => void }) {
           <div className="flex flex-col gap-1">{lower.map(cell)}</div>
         </div>
       </div>
+
+      {/* 내 차례 플래시 (소리를 껐거나 못 듣는 상황의 보조 신호) */}
+      {flash > 0 && <span key={flash} className="yc-turn-flash" />}
+
+      {/* 알림 설정 — 아이폰은 진동이 없어서 소리가 유일한 알림이다 */}
+      <button
+        onClick={() => {
+          unlockAudio() // iOS: 사용자 탭 안에서 오디오를 깨워 둔다
+          setSoundOn((v) => !v)
+        }}
+        className="mt-2 shrink-0 self-center text-[11px] text-white/45 underline"
+      >
+        {soundOn ? '🔔 차례 알림음 켜짐' : '🔇 차례 알림음 꺼짐'}
+        {!canVibrate && soundOn && ' · 이 기기는 진동 미지원'}
+      </button>
 
       {/* 리액션 — 남의 차례에도 참견할 수 있게 */}
       {view.canReact && (

@@ -574,6 +574,23 @@ body {
   border-top: 1px solid var(--line-2);
 }
 
+/* 폰 컨트롤러 — "내 차례" 알림 플래시.
+   iOS 는 웹 진동이 없어서(아이폰 크롬도 동일: 모든 브라우저가 WebKit) 진동만으로는
+   차례가 온 걸 알 수 없다. 소리와 함께 화면도 한 번 확실히 번쩍이게 한다. */
+@keyframes yc-turn-flash {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.yc-turn-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, rgba(240, 201, 131, 0.5), transparent 70%);
+  animation: yc-turn-flash 0.9s ease-out both;
+}
+
 /* "누가 어디에 몇 점" 알림 — 화면 아래에서 잠깐 */
 .yd-log {
   position: fixed;
