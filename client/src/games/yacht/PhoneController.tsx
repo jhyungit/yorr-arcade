@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { socket } from '../../net/socket'
-import { canVibrate, feedbackTap, feedbackTurn } from '../../lib/feedback'
+import { feedbackTap, feedbackTurn } from '../../lib/feedback'
+import { UPPER_BONUS_POINTS, UPPER_BONUS_THRESHOLD } from '../../game/yacht'
 import { REACTION_EMOJI, type ReactionType } from '../../net/types'
 import {
   YACHT_KEEP,
@@ -89,25 +90,76 @@ function Die({ value, kept, disabled, onTap }: {
   )
 }
 
+/**
+ * BonusGauge — 상단(1~6) 보너스 진행 막대
+ * -------------------------------------------------------------
+ * 노트북 점수표(ScoreCard)에는 있는데 폰에는 없어서, 폰만 보고 플레이하면
+ * "왜 굳이 6을 모아야 하는지"가 안 보였다. 같은 게이지를 폰 크기로 옮긴다.
+ *
+ * 세 가지 상태를 구분한다 — 남은 점수를 알려주는 게 이 게이지의 존재 이유고,
+ * 상단을 다 채웠는데 63을 못 넘긴 경우를 '진행 중'처럼 두면 계속 기다리게 된다.
+ *   진행 중 : 금색 · "N점 더"
+ *   달성    : 초록 · +35 확정
+ *   놓침    : 상단 6칸을 다 채웠는데 63 미만 → 회색 (더 기다릴 필요 없음)
+ */
+function BonusGauge({ sum, upperDone }: { sum: number; upperDone: boolean }) {
+  const got = sum >= UPPER_BONUS_THRESHOLD
+  const missed = upperDone && !got
+  const left = UPPER_BONUS_THRESHOLD - sum
+  const accent = got ? POS : missed ? 'rgba(255,255,255,0.32)' : GOLD
+
+  return (
+    <div
+      className="mt-1 rounded-lg px-2 py-1.5"
+      aria-label={`상단 보너스 ${sum} / ${UPPER_BONUS_THRESHOLD}점`}
+      style={{
+        background: got ? 'rgba(63,191,155,0.14)' : 'rgba(255,255,255,0.05)',
+        border: `1px solid ${got ? 'rgba(63,191,155,0.45)' : 'rgba(255,255,255,0.08)'}`,
+      }}
+    >
+      <div className="flex items-baseline justify-between gap-1">
+        <span className="truncate text-[10px] font-bold" style={{ color: accent }}>
+          {got ? `보너스 +${UPPER_BONUS_POINTS} 획득` : missed ? '보너스 놓침' : `보너스 +${UPPER_BONUS_POINTS}`}
+        </span>
+        <span className="shrink-0 text-[10px] font-black tabular-nums" style={{ color: accent }}>
+          {sum}
+          <span className="font-bold text-white/30">/{UPPER_BONUS_THRESHOLD}</span>
+        </span>
+      </div>
+
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full" style={{ background: 'rgba(0,0,0,0.35)' }}>
+        <div
+          className="h-full rounded-full transition-[width] duration-500 ease-out"
+          style={{
+            width: `${Math.min(100, (sum / UPPER_BONUS_THRESHOLD) * 100)}%`,
+            background: got
+              ? POS
+              : missed
+                ? 'rgba(255,255,255,0.16)'
+                : `linear-gradient(90deg,${GOLD},${GOLD_2})`,
+          }}
+        />
+      </div>
+
+      {!got && !missed && (
+        <p className="mt-1 text-[9px] leading-none text-white/40">
+          <b className="tabular-nums text-white/60">{left}점</b> 더 채우면 +{UPPER_BONUS_POINTS}
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function PhoneController({ onSwing }: { onSwing: () => void }) {
   const [view, setView] = useState<YachtView | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [flash, setFlash] = useState(0) // 내 차례 플래시 (키를 바꿔 애니메이션 재생)
   const wasMine = useRef(false)
 
-  /* 아이폰용 진동 폴리필을 이 화면에서만 붙인다.
-     숨긴 <input switch> 를 label.click() 으로 토글해 iOS 시스템 햅틱을 빌려 쓰는 방식.
-     라이브러리가 DOM 을 <label> 로 감싸고 클릭을 가로채므로, WebGL 캔버스 탭 판정이
-     있는 게임 화면에는 절대 올리지 않는다. 컨트롤러는 순수 버튼 UI 라 안전하다.
-     ※ iOS 18.4+ 는 "진짜 탭 직후 1초" 안에만 허용 → 탭 햅틱은 되고,
-       비동기로 오는 내 차례 알림은 안 된다(그건 소리·플래시가 담당). */
-  useEffect(() => {
-    if (!canVibrate()) {
-      void import('ios-vibrator-pro-max').catch(() => {
-        /* 못 불러와도 소리·플래시로 동작한다 */
-      })
-    }
-  }, [])
+  /* 진동은 이 화면이 신경 쓰지 않는다 — feedbackTap 이 기기별로 알아서 처리한다
+     (아이폰은 웹 진동이 불가능해서 무동작. lib/feedback.ts 의 canVibrate 참고).
+     ※ 예전에 여기서 붙였던 ios-vibrator-pro-max 는 제거했다. 모든 버튼 위에
+       투명 오버레이를 덮는 방식이라 주사위 킵 탭이 씹혔다. */
 
   // 노트북이 보내 주는 화면 상태 수신
   useEffect(() => {
@@ -156,6 +208,11 @@ export default function PhoneController({ onSwing }: { onSwing: () => void }) {
   const remain = view.deadline ? Math.max(0, Math.ceil((view.deadline - now) / 1000)) : null
   const upper = view.cells.slice(0, 6)
   const lower = view.cells.slice(6)
+  /* 상단 보너스는 노트북에서 따로 받지 않고 여기서 센다 — 점수판(cells)이 이미
+     노트북이 보내 준 확정값이므로 두 화면이 어긋날 일이 없다. (규칙 판정은
+     계속 노트북에만 있고, 폰은 받은 숫자를 더하기만 한다.) */
+  const upperTotal = upper.reduce((s, c) => s + (c.score ?? 0), 0)
+  const upperDone = upper.every((c) => c.score !== null)
 
   const cell = (c: YachtView['cells'][number]) => {
     const filled = c.score !== null
@@ -283,8 +340,12 @@ export default function PhoneController({ onSwing }: { onSwing: () => void }) {
             내 총점 <b className="tabular-nums" style={{ color: GOLD_2 }}>{view.total}</b>
           </span>
         </div>
-        <div className="grid grid-cols-2 gap-1.5">
-          <div className="flex flex-col gap-1">{upper.map(cell)}</div>
+        <div className="grid grid-cols-2 items-start gap-1.5">
+          {/* 왼쪽(1~6) 아래에 보너스 게이지 — 노트북 점수표와 같은 자리 */}
+          <div className="flex flex-col gap-1">
+            {upper.map(cell)}
+            <BonusGauge sum={upperTotal} upperDone={upperDone} />
+          </div>
           <div className="flex flex-col gap-1">{lower.map(cell)}</div>
         </div>
       </div>

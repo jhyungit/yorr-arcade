@@ -6,9 +6,22 @@ dist/
 build/
 
 # 환경 변수 / 로컬 설정
+# .env.* 로 넓게 막는다 — .env.production 같은 걸 새로 만들어 실수로 커밋하는 사고 방지.
+# (예시 파일은 일부러 통과시킨다)
 .env
-.env.local
+.env.*
+!.env.example
 *.local
+
+# 비밀키 · 인증서 (공개 저장소라 한 번 올라가면 히스토리에서 못 지운다)
+*.pem
+*.p12
+*.pfx
+*.key
+
+# 터널 설정 (ngrok authtoken 이 이 안에 들어간다)
+ngrok.yml
+.ngrok/
 
 # 로그
 *.log
@@ -16,6 +29,10 @@ npm-debug.log*
 
 # 에디터 / OS
 .DS_Store
+.DS_Store?
+Thumbs.db
+*.swp
+*.swo
 .vscode/*
 !.vscode/extensions.json
 .idea/

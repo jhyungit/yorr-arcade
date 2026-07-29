@@ -4,7 +4,8 @@
  * 흔들기/던지기에 대한 감각 피드백을 크로스 플랫폼으로 처리.
  *
  * - 진동(햅틱): 안드로이드 Chrome 은 navigator.vibrate 지원.
- *   iOS 사파리는 웹 진동을 지원하지 않으므로, 진동 대신
+ *   **iOS 는 웹 진동이 불가능하다** — API 가 없고(모든 브라우저가 WebKit),
+ *   우회로도 안 된다(canVibrate 주석 참고). 그래서 진동 대신
  *   "효과음 + 화면 흔들림"으로 폴백한다. (화면 흔들림은 App 에서 처리)
  * - 효과음: Web Audio API 로 아주 짧은 톤을 생성. 외부 오디오 파일이 없어도
  *   되고, iOS/안드로이드 공통으로 동작한다.
@@ -55,12 +56,20 @@ export function feedbackSettings() {
 }
 
 /**
- * 브라우저가 진동을 지원하는지.
+ * 진동을 쓸 수 있는지. 안드로이드 크롬 등은 true, **iOS 는 항상 false**.
  * -------------------------------------------------------------
- * 상수가 아니라 **함수**여야 한다. 아이폰용 폴리필(ios-vibrator-pro-max)을
- * 폰 컨트롤러에서 동적 import 하는데, 모듈 로드 시점에 한 번 평가하는 const 로
- * 두면 그때는 아직 navigator.vibrate 가 없어서 false 로 굳어 버린다.
- * → 폴리필이 붙은 뒤에도 계속 진동이 무시된다. 호출할 때마다 다시 본다.
+ * iOS 우회는 두 가지를 다 시도해 보고 버렸다 (2026-07, iPhone 16 Pro 기준):
+ *
+ *  1. ios-vibrator-pro-max — 스위치 토글 햅틱을 "언제든" 쓰려고 페이지의 모든
+ *     버튼 위에 CSS anchor 로 투명 <label> 을 덮고 진짜 탭을 가로채 합성 클릭으로
+ *     되돌려준다. 주사위 버튼처럼 transform 으로 움직이는(active:scale·translateY)
+ *     요소는 오버레이 위치가 어긋나 **탭이 씹혔다**. 그런데 진동은 오지도 않았다.
+ *  2. 직접 <input switch> 를 만들어 탭 핸들러에서 label.click() — 위 라이브러리의
+ *     핵심만 남긴 최소 버전. DOM 오염은 없었지만 **진동은 여전히 안 왔고**
+ *     정체불명의 딸깍 소리만 생겼다.
+ *
+ * → 애플이 이 경로를 막은 것으로 보고 우회를 포기했다. 되살릴 생각이 든다면
+ *   위 두 실패를 먼저 볼 것. iOS 는 소리 + 화면 플래시가 정답이다.
  */
 export function canVibrate() {
   return typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function'
@@ -103,10 +112,9 @@ function beep(freq: number, durationMs: number, volume = 0.2) {
  * 소리는 내지 않는다. 점수 칸을 고르며 여러 번 탭하게 되는데 그때마다
  * 삑삑거리면 시끄럽다. 손끝 반응만 준다.
  *
- * 아이폰: ios-vibrator-pro-max 폴리필이 붙어 있으면 여기서도 진동이 온다.
- * "사용자 탭 직후 1초" 안에만 허용되는데, 이 함수는 탭 핸들러에서 바로
- * 부르므로 그 조건에 들어간다. (내 차례 알림처럼 비동기로 오는 신호는
- * 그 창을 못 맞춰서 진동이 안 되고, 그래서 소리·플래시로 알린다.)
+ * 아이폰에서는 아무 일도 일어나지 않는다(canVibrate 주석 참고). 그래서 탭에
+ * 소리를 붙이지 않는 이 함수는 iOS 에서 무음·무진동이다 — 의도된 것이다.
+ * 대신 "내 차례" 같은 중요한 신호는 feedbackTurn 이 소리·플래시로 알린다.
  */
 export function feedbackTap(strong = false) {
   if (canVibrate() && vibrationOn) navigator.vibrate(strong ? 22 : 11)

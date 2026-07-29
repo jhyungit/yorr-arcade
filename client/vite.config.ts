@@ -1,15 +1,44 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import basicSsl from '@vitejs/plugin-basic-ssl'
+
+/**
+ * 시작할 때 접속 주소를 "딱 한 줄"만 찍는다.
+ *
+ * Vite 6.4 는 https 인증서의 subjectAltName 에 들어있는 호스트명까지 전부 Local: 로
+ * 나열한다. basicSsl() 이 만드는 인증서 SAN 에는 localhost·localhost.localdomain·
+ * lvh.me·*.lvh.me 가 들어 있어서 주소가 5줄씩 뜨고, 어디로 들어가야 할지 헷갈린다.
+ *
+ * 이 프로젝트의 정답은 늘 랜 IP 하나다. localhost 로 열면 폰 연결 QR 이
+ * window.location.origin 을 담아 폰에서 자기 자신을 가리키므로 오히려 안 된다
+ * (그래서 GameHub 이 isReachableFromPhone 으로 걸러 경고를 띄운다).
+ */
+function singleUrl(): Plugin {
+  return {
+    name: 'yorr-single-url',
+    configureServer(server) {
+      server.printUrls = () => {
+        const network = server.resolvedUrls?.network ?? []
+        const local = server.resolvedUrls?.local ?? []
+        // 도커 브리지(172.17.x) 같은 게 섞였을 때 와이파이(192.168.x·10.x)를 먼저 고른다.
+        // 아이폰 핫스팟은 172.20.10.x 지만 그때는 후보가 하나뿐이라 그대로 잡힌다.
+        const url = network.find((u) => /:\/\/(192\.168\.|10\.)/.test(u)) ?? network[0] ?? local[0]
+        if (!url) return
+        server.config.logger.info(`\n  ➜  접속 주소:  ${url}   ← 맥·폰 모두 이 주소로\n`)
+      }
+    },
+  }
+}
 
 // Vite 설정.
 // - react(): JSX/TSX + Fast Refresh
 // - tailwindcss(): Tailwind v4 (별도 config 파일 없이 CSS의 @import 로 동작)
 // - basicSsl(): 로컬에서 https 로 뜨게 해주는 자체 서명 인증서 플러그인.
 //   (DeviceMotion 센서는 https(보안 컨텍스트)에서만 동작하므로 로컬도 https 로 띄운다.)
+// - singleUrl(): 접속 주소를 한 줄만 (위 주석 참고)
 export default defineConfig({
-  plugins: [react(), tailwindcss(), basicSsl()],
+  plugins: [react(), tailwindcss(), basicSsl(), singleUrl()],
   build: {
     rollupOptions: {
       output: {
@@ -19,8 +48,8 @@ export default defineConfig({
       },
     },
   },
-  // 시작할 때 화면을 지우지 않는다 — 로컬플레이.bat 이 먼저 출력한
-  // "노트북용 / 폰용" 접속 주소 두 줄이 지워지면 안 된다.
+  // 시작할 때 화면을 지우지 않는다 — 로컬플레이 스크립트가 먼저 출력한
+  // 안내(인증서 경고 넘기기·QR 찍기)가 지워지면 안 된다.
   clearScreen: false,
   server: {
     // 0.0.0.0 로 바인딩 → 같은 와이파이의 폰에서 노트북 IP로 직접 접속 가능.

@@ -291,12 +291,15 @@ export default function Controller({ initialCode }: ControllerProps) {
             style={{ background: '#141a26', border: '1px solid rgba(255,255,255,0.14)' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mb-3 flex items-center justify-between">
-              <span className="label-mono text-white/45">SETTINGS</span>
+            {/* 닫기는 44x44 (애플 권장 최소 탭 타겟). 글리프만 두면 손가락으로
+                못 맞힌다. -mr-1.5/-mt-1.5 로 여백만 먹고 시각적 위치는 유지. */}
+            <div className="mb-3 flex items-start justify-between">
+              <span className="label-mono mt-2.5 text-white/45">SETTINGS</span>
               <button
                 onClick={() => setSettingsOpen(false)}
                 aria-label="닫기"
-                className="text-white/50"
+                className="-mr-1.5 -mt-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-base text-white/55 active:scale-90"
+                style={{ background: 'rgba(255,255,255,0.06)' }}
               >
                 ✕
               </button>
@@ -313,23 +316,24 @@ export default function Controller({ initialCode }: ControllerProps) {
             />
             <Toggle
               label="진동"
-              desc={
-                canVibrate()
-                  ? '탭 · 알림 햅틱'
-                  : '이 기기는 웹 진동을 지원하지 않아요 (아이폰)'
-              }
+              desc={canVibrate() ? '탭 · 알림 햅틱' : '이 기기는 웹 진동을 지원하지 않아요'}
               on={vibeOn}
               disabled={!canVibrate()}
               onChange={(v) => {
                 setVibeOn(v)
+                /* 라이브러리에 먼저 직접 반영한다. 아래 useEffect 로도 동기화되지만
+                   그건 렌더 뒤에 돌아서, 이 자리에서 바로 feedbackTap 을 부르면
+                   아직 "꺼짐"으로 보고 무시해 버린다 → 켜자마자 아무 느낌이 없었다.
+                   게다가 iOS 는 진짜 탭 안에서만 햅틱이 되므로 여기서 불러야 한다. */
+                setVibrationEnabled(v)
                 if (v) feedbackTap(true) // 켜자마자 한 번 느껴 보게
               }}
             />
 
             {!canVibrate() && (
               <p className="mt-3 text-[11px] leading-relaxed text-white/40">
-                아이폰은 웹 진동이 막혀 있어 <b className="text-white/60">소리와 화면 플래시</b>로
-                차례를 알려줘요.
+                아이폰은 브라우저에서 진동을 쓸 수 없어요(크롬도 같아요). 그래서 내 차례는{' '}
+                <b className="text-white/60">소리와 화면 플래시</b>로 알려줘요.
               </p>
             )}
           </div>
