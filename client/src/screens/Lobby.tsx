@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import QrCode from '../components/QrCode'
 import { seatColor } from '../components/PlayerStrip'
+import { isReachableFromPhone } from '../lib/device'
 import type { RoomState } from '../net/types'
 
 /**
@@ -66,8 +68,20 @@ export default function Lobby({ room, isHost, youId, onStart, onLeave }: LobbyPr
           </span>
         </button>
 
+        {/* QR — 한 화면을 같이 보며 각자 폰으로 입장(파티 모드) */}
+        {isReachableFromPhone() && (
+          <div className="mt-4 flex items-center gap-3.5 rounded-xl border border-[var(--line)] bg-[var(--card)] p-3">
+            <QrCode value={joinUrl} size={104} />
+            <div className="min-w-0 text-[12px] leading-relaxed text-[var(--ink-2)]">
+              <b className="text-[var(--ink)]">QR 로 바로 입장</b>
+              <br />
+              옆 사람은 이걸 찍으면 코드를 안 넣어도 참가 화면으로 들어옵니다.
+            </div>
+          </div>
+        )}
+
         {/* 공유 링크 */}
-        <div className="mt-4 flex gap-2">
+        <div className="mt-3 flex gap-2">
           <input
             readOnly
             value={joinUrl}

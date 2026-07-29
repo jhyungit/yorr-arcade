@@ -10,9 +10,10 @@
   "scripts": {
     "build": "npm --prefix client ci && npm --prefix client run build && npm --prefix server ci --omit=dev",
     "start": "npm --prefix server start",
-    "test": "node test/room.test.mjs && node test/pair.test.mjs"
+    "test": "node test/room.test.mjs && node test/pair.test.mjs && node test/qr.test.mjs"
   },
   "devDependencies": {
+    "jsqr": "^1.4.0",
     "socket.io-client": "^4.8.3"
   }
 }

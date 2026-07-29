@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { GAME_CARDS } from './gameCards'
+import QrCode from '../components/QrCode'
+import { isReachableFromPhone } from '../lib/device'
 
 /**
  * GameHub — 랜딩 (아케이드 캐비닛 스타일 게임 선택)
@@ -307,6 +309,10 @@ function PhonePanel({
   onController,
   onClose,
 }: PhonePanelProps) {
+  // QR 에 담을 주소 — ?ctrl=코드 로 열리면 Controller 가 코드 입력 없이 자동 연결한다
+  const ctrlUrl = `${window.location.origin}/?ctrl=${pairCode ?? ''}`
+  const phoneReachable = isReachableFromPhone()
+
   return (
     <div
       className="absolute inset-0 z-30 flex items-center justify-center bg-black/78 px-5 backdrop-blur-sm"
@@ -324,89 +330,95 @@ function PhonePanel({
         </div>
 
         {pairCode ? (
+          /* QR 을 찍으면 ?ctrl=코드 로 열려 코드 입력 없이 바로 컨트롤러가 된다.
+             코드·링크는 QR 을 못 찍는 상황(카메라 앱이 없거나 인증서 경고에서 막힘)
+             대비용으로 아래에 같이 둔다. */
           <>
-            <p className="mt-4 text-center text-xs text-white/50">
-              폰 브라우저로 같은 주소에 접속해 코드를 입력하세요
+            <p className="mt-3.5 text-center text-[13px] font-bold text-white/85">
+              폰 카메라로 QR 을 찍으세요
             </p>
-            <div className="mt-3 flex justify-center gap-2">
-              {pairCode.split('').map((ch, i) => (
-                <span
-                  key={i}
-                  className="flex h-16 items-center justify-center rounded-xl border-2 text-3xl font-black"
-                  style={{
-                    width: 52,
-                    borderColor: 'color-mix(in oklab, var(--ac) 60%, transparent)',
-                    background: 'rgba(255,255,255,0.04)',
-                    color: 'var(--ac)',
-                  }}
-                >
-                  {ch}
+            <p className="mt-1 text-center text-[11px] text-white/45">
+              찍으면 코드 입력 없이 바로 컨트롤러가 됩니다
+            </p>
+
+            {phoneReachable ? (
+              <div className="mt-3.5 flex justify-center">
+                <QrCode value={ctrlUrl} size={188} />
+              </div>
+            ) : (
+              /* localhost 로 열어 두면 QR 이 폰에서 자기 자신을 가리켜 아무것도 안 뜬다.
+                 원인을 짐작하기 어려운 실패라 QR 대신 이유를 알려 준다. */
+              <div
+                className="mt-3.5 rounded-xl p-3.5 text-center text-[12px] leading-relaxed"
+                style={{ background: 'rgba(224,72,58,0.12)', border: '1px solid rgba(224,72,58,0.4)' }}
+              >
+                <b className="text-[#ff9b8f]">이 주소는 폰에서 열 수 없어요</b>
+                <br />
+                <span className="text-white/60">
+                  지금 <b className="text-white/80">{window.location.hostname}</b> 로 열려 있어요.
+                  <br />
+                  로컬플레이가 알려주는 <b className="text-white/80">172.x.x.x</b> 주소로 다시 여시면
+                  QR 이 나옵니다.
                 </span>
-              ))}
+              </div>
+            )}
+
+            {/* 대체 수단: 코드 직접 입력 */}
+            <div className="mt-4">
+              <div className="label-mono text-center text-white/35">또는 코드 입력</div>
+              <div className="mt-2 flex justify-center gap-2">
+                {pairCode.split('').map((ch, i) => (
+                  <span
+                    key={i}
+                    className="flex h-12 items-center justify-center rounded-lg border-2 text-2xl font-black"
+                    style={{
+                      width: 40,
+                      borderColor: 'color-mix(in oklab, var(--ac) 60%, transparent)',
+                      background: 'rgba(255,255,255,0.04)',
+                      color: 'var(--ac)',
+                    }}
+                  >
+                    {ch}
+                  </span>
+                ))}
+              </div>
+              <p className="mt-2 break-all text-center text-[10px] text-white/30">{ctrlUrl}</p>
             </div>
-            <div className="mt-4 text-center text-xs">
+
+            <div className="mt-3 text-center text-xs">
               {phoneConnected ? (
                 <span className="font-bold text-[#49e08a]">
-                  ● {phoneCount}대 연결됨 — 퀵드로우는 2대면 폰끼리 결투!
+                  ● {phoneCount}대 연결됨 — 여러 대 붙일 수 있어요
                 </span>
               ) : (
-                <span className="text-white/45">아직 연결된 폰이 없어요 — 여러 대 붙일 수 있어요</span>
+                <span className="text-white/45">폰을 기다리는 중…</span>
               )}
             </div>
+
+            {/* 이 기기가 폰인 경우(허브를 폰에서 연 경우)를 위한 탈출구 */}
+            <button onClick={onController} className="mt-3 w-full text-center text-[11px] text-white/35 underline">
+              이 기기를 다른 화면의 컨트롤러로 쓰기
+            </button>
           </>
         ) : (
-          <div className="mt-4 grid gap-2.5">
-            <Choice
-              emoji="🖥️"
-              title="이 기기를 화면으로"
-              desc="연결 코드를 발급해 폰을 붙입니다"
+          <>
+            <p className="mt-4 text-center text-[12px] leading-relaxed text-white/55">
+              폰을 컨트롤러로 쓰면 <b className="text-white/80">흔들기·기울이기</b>로 조종할 수 있어요.
+              <br />
+              요트 다이스는 <b className="text-white/80">주사위 킵·점수 기록</b>까지 폰에서 됩니다.
+            </p>
+            <button
               onClick={onConnectPhone}
-              primary
-            />
-            <Choice
-              emoji="🎮"
-              title="이 폰을 컨트롤러로"
-              desc="다른 화면의 코드를 입력합니다"
-              onClick={onController}
-            />
-          </div>
+              className="ar-play font-display mt-4 w-full rounded-xl py-3.5 text-[15px] font-black"
+            >
+              📱 QR 코드 띄우기
+            </button>
+            <button onClick={onController} className="mt-3 w-full text-center text-[11px] text-white/35 underline">
+              이 기기를 다른 화면의 컨트롤러로 쓰기
+            </button>
+          </>
         )}
       </div>
     </div>
-  )
-}
-
-function Choice({
-  emoji,
-  title,
-  desc,
-  onClick,
-  primary,
-}: {
-  emoji: string
-  title: string
-  desc: string
-  onClick: () => void
-  primary?: boolean
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex items-center gap-3 rounded-2xl border px-4 py-3.5 text-left transition active:scale-[0.98]"
-      style={
-        primary
-          ? {
-              borderColor: 'color-mix(in oklab, var(--ac) 55%, transparent)',
-              background: 'color-mix(in oklab, var(--ac) 10%, transparent)',
-            }
-          : { borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.04)' }
-      }
-    >
-      <span className="text-2xl leading-none">{emoji}</span>
-      <span className="min-w-0">
-        <span className="block text-[13px] font-bold text-white/90">{title}</span>
-        <span className="block text-[11px] leading-snug text-white/45">{desc}</span>
-      </span>
-    </button>
   )
 }

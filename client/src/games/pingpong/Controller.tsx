@@ -180,6 +180,16 @@ export default function Controller({ initialCode }: ControllerProps) {
     // eslint 규칙 없음: 최초 1회만 실행
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* iOS 오디오 잠금 풀기 — 첫 터치 한 번으로.
+     QR 로 들어오면 코드를 타이핑하지 않으므로 "연결하기" 탭이 없다. 그러면
+     아이폰에서 오디오가 안 깨워져 "내 차례" 알림음이 안 난다(진동도 없는 기기라
+     알림이 통째로 사라진다). 화면 어디든 처음 만지는 순간 깨운다. */
+  useEffect(() => {
+    const once = () => unlockAudio()
+    window.addEventListener('pointerdown', once, { once: true, capture: true })
+    return () => window.removeEventListener('pointerdown', once, { capture: true })
+  }, [])
+
   // 노트북이 재는 입력 지연에 응답만 해준다 (연결돼 있는 동안 계속)
   useEffect(() => {
     if (!joined) return

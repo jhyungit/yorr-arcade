@@ -14,3 +14,15 @@ export const likelyKeyboard =
   typeof window !== 'undefined' &&
   typeof window.matchMedia === 'function' &&
   window.matchMedia('(pointer: fine)').matches
+
+/**
+ * 지금 이 주소를 "다른 기기(폰)"가 그대로 열 수 있는가.
+ * -------------------------------------------------------------
+ * QR 은 지금 브라우저 주소를 그대로 담는데, 노트북에서 localhost 로 열어 놓고
+ * QR 을 찍으면 폰이 자기 자신을 가리켜서 아무것도 안 뜬다. 원인을 짐작하기
+ * 어려운 실패라(QR 이 잘못된 것처럼 보인다) 미리 걸러서 안내한다.
+ * 로컬플레이 스크립트가 알려주는 172.x 같은 주소로 열면 된다.
+ */
+export function isReachableFromPhone(origin = window.location.hostname) {
+  return !/^(localhost|127\.0\.0\.1|\[::1\]|::1|0\.0\.0\.0)$/i.test(origin)
+}
