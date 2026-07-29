@@ -1,0 +1,18 @@
+{
+  "name": "yorr",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "YORR 아케이드 — 배포용 루트 (클라이언트 빌드 → 서버가 앱+소켓을 한 포트로 서빙)",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "npm --prefix client ci && npm --prefix client run build && npm --prefix server ci --omit=dev",
+    "start": "npm --prefix server start",
+    "test": "node test/room.test.mjs && node test/pair.test.mjs"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.3"
+  }
+}

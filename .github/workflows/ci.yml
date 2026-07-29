@@ -1,0 +1,79 @@
+# =============================================================
+#  CI/CD — 검사(CI)가 통과했을 때만 배포(CD)한다
+# -------------------------------------------------------------
+#  흐름
+#    develop 작업 → PR → check 통과 → main 머지 → check 다시 통과 → deploy
+#
+#  왜 Render 의 Auto-Deploy 를 안 쓰나
+#    Auto-Deploy 는 GitHub push 만 보고 CI 결과를 모른다. 켜 두면 테스트가
+#    빨간불인 커밋도 그대로 배포된다. 그래서 render.yaml 에서 끄고,
+#    여기서 "check 통과 → Deploy Hook 호출" 순서를 강제한다.
+#
+#  깨졌을 때 어떻게 되나
+#    · check 실패            → deploy 가 아예 안 돈다. 배포된 버전은 그대로 유지.
+#    · Render 빌드 실패      → Render 가 새 버전을 안 띄우고 이전 버전을 계속 서빙.
+#    · 배포는 됐는데 버그    → 자동으로 안 잡힌다. 사람이 되돌려야 한다(README 롤백 참고).
+#
+#  무엇을 보나
+#   1) 타입체크 + 실제 배포와 같은 빌드 (client 의 build 가 tsc 를 먼저 돈다)
+#   2) 서버를 정말 띄워서 소켓 여러 개를 붙이는 통합 테스트
+#      — 게임 규칙이 서버에 있으므로(턴 진행·주사위·점수) 회귀를 여기서 잡는다
+# =============================================================
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+# 같은 브랜치에 연달아 push 하면 이전 실행은 취소 (무료 러너 시간 절약)
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+            server/package-lock.json
+
+      # 루트(테스트용 socket.io-client) — 배포에는 안 쓰인다
+      - name: 루트 의존성
+        run: npm ci
+
+      # 배포와 똑같은 명령으로 빌드한다 (여기서 통과하면 Render 에서도 통과)
+      - name: 빌드 (타입체크 포함)
+        run: npm run build
+
+      - name: 통합 테스트 (서버 + 소켓)
+        run: npm test
+
+  # check 가 통과한 main 만 배포한다. needs 가 있어서 검사가 깨지면 이 잡은 안 돈다.
+  deploy:
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Render 배포 요청 (Deploy Hook)
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::warning::RENDER_DEPLOY_HOOK_URL 시크릿이 없어 배포를 건너뜁니다."
+            echo "Render 대시보드 → Settings → Deploy Hook 의 URL 을 저장소 시크릿에 넣으세요."
+            exit 0
+          fi
+          curl -fsS -X POST "$HOOK" -o /dev/null
+          echo "배포를 요청했습니다. 진행 상황은 Render 대시보드에서 확인하세요."

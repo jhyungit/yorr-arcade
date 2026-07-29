@@ -1,0 +1,38 @@
+# =============================================================
+#  Render 배포 설정 (Blueprint)
+# -------------------------------------------------------------
+#  서비스 하나만 띄운다. Node 서버가 빌드된 앱(client/dist)과 소켓을
+#  같은 포트로 서빙하므로 프론트를 따로 호스팅하지 않는다.
+#  → 클라이언트가 io() 를 주소 없이 부르는 구조(same-origin)가 그대로 동작하고
+#    CORS 설정도 필요 없다.
+#
+#  ⚠️ 인스턴스를 늘리면 안 된다.
+#  방 상태(rooms Map)가 프로세스 메모리에 있어서, 2개로 늘리면 서로 다른
+#  인스턴스에 붙은 사람끼리 같은 방을 못 본다("방을 찾을 수 없어요"가 뜬다).
+#  Socket.IO 의 polling 폴백도 sticky session 이 필요해 같은 문제를 겪는다.
+#  여러 인스턴스로 키우려면 Redis 어댑터를 먼저 붙여야 한다.
+#
+#  ⚠️ 무료 플랜은 유휴 상태로 두면 잠든다(첫 접속이 수십 초 걸림) + 재시작 시
+#  진행 중인 방이 사라진다(메모리 저장). 약속해서 노는 용도라면 문제없다.
+# =============================================================
+services:
+  - type: web
+    name: yorr-arcade
+    runtime: node
+    plan: free
+    # 한국에서 가장 가까운 리전 — 실시간 게임이라 왕복 지연이 체감된다
+    region: singapore
+    branch: main
+    # ⚠️ 일부러 껐다. Render 의 Auto-Deploy 는 push 만 보고 CI 결과를 모르기 때문에,
+    # 켜 두면 테스트가 빨간불인 커밋도 그대로 배포된다.
+    # 대신 CI(.github/workflows/ci.yml)가 통과했을 때만 Deploy Hook 을 호출한다.
+    #   Render 대시보드 → Settings → Deploy Hook 에서 URL 복사
+    #   → GitHub 저장소 Settings → Secrets → RENDER_DEPLOY_HOOK_URL 로 등록
+    autoDeploy: false
+    buildCommand: npm run build
+    startCommand: npm start
+    # 서버가 /health 에 'ok' 를 준다 (server/index.js)
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

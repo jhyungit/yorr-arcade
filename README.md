@@ -126,6 +126,13 @@ YORR/
 │        └─ wakeLock.ts          # 플레이 중 화면 꺼짐 방지
 ├─ server/                       # 실시간 서버 (Node.js + Express + Socket.IO)
 │  └─ index.js                   # 폰 페어링 중계 · 요트 방 · 온라인 1:1 매치 · 정적 서빙
+├─ package.json                  # ★배포용 루트 (build = 클라 빌드, start = 서버, test)
+├─ render.yaml                   # ★Render 배포 설정 (인스턴스 1개 · 자동배포는 CI가 함)
+├─ .github/workflows/ci.yml      # ★CI/CD — 검사 통과 시에만 배포
+├─ test/                         # ★통합 테스트 (서버를 띄워 소켓 여러 개를 붙인다)
+│  ├─ harness.mjs                #   서버 띄우기/붙기 도우미
+│  ├─ room.test.mjs              #   턴제 방: 관전·권위·라운드·재접속·자동플레이
+│  └─ pair.test.mjs              #   폰 컨트롤러 중계 (disp:game · ctrl:swing)
 ├─ 로컬플레이.bat               # ★같은 와이파이/핫스팟에서 플레이 (더블클릭)
 ├─ local-play.ps1               #   (로컬플레이.bat 이 호출하는 스크립트)
 ├─ 온라인플레이.bat             # ★멀리 있는 친구와 온라인 플레이 (ngrok, 더블클릭)
@@ -185,6 +192,72 @@ npm run dev      # https://localhost:5173
 
 > 웹(5173)은 `/socket.io` 요청을 서버(3001)로 **프록시**합니다(`vite.config.ts`).
 > 덕분에 폰은 **5173 한 포트만** 열면 실시간 통신까지 됩니다. (CORS/추가 포트 불필요)
+
+---
+
+## ☁️ 배포 (고정 주소로 상시 운영)
+
+`온라인플레이.bat`(ngrok)은 **내 노트북이 켜져 있어야** 하고 주소가 매번 바뀐다.
+"항상 같은 주소로 들어와서 플레이"를 하려면 클라우드에 올린다.
+
+**서비스 하나만 배포하면 된다.** Node 서버가 빌드된 앱(`client/dist`)과 소켓을 같은
+포트로 서빙하므로, 클라이언트의 `io()`(주소 없이 = same-origin)가 그대로 동작하고
+CORS 설정도 필요 없다. 프론트를 Vercel 등에 따로 올리면 이 구조가 깨진다.
+
+```
+npm run build   # client 의존성 설치 → 앱 빌드 → server 의존성 설치
+npm start       # 서버가 앱 + 소켓을 PORT 로 서빙
+npm test        # 서버를 띄워 소켓 여러 개를 붙이는 통합 테스트
+```
+
+### 처음 한 번만
+
+1. [Render](https://render.com) 가입 → **New → Blueprint** → 이 저장소 선택
+   (루트의 [render.yaml](render.yaml) 을 읽어 자동 설정된다)
+2. 대시보드 → **Settings → Deploy Hook** 의 URL 복사
+3. GitHub 저장소 → **Settings → Secrets and variables → Actions** →
+   `RENDER_DEPLOY_HOOK_URL` 로 등록
+4. 발급된 `https://<이름>.onrender.com` 주소를 공유하면 끝.
+   도메인을 샀다면 Render 에서 커스텀 도메인으로 연결(CNAME)하면 된다 — **도메인은 필수가 아니다.**
+
+### 배포 흐름 (CI/CD)
+
+```
+develop 작업 ─PR─▶ CI(빌드+테스트) ─통과─▶ main 머지 ─▶ CI 재검사 ─통과─▶ Render 배포
+                        │                                    │
+                      실패 → 머지 못 함                    실패 → 배포 안 함
+```
+
+- **CI** = 타입체크·빌드·통합테스트 ([.github/workflows/ci.yml](.github/workflows/ci.yml))
+- **CD** = 그게 통과했을 때만 Render Deploy Hook 을 호출
+- Render 의 Auto-Deploy 는 **일부러 껐다**(`autoDeploy: false`). Auto-Deploy 는 push 만
+  보고 CI 결과를 모르기 때문에, 켜 두면 테스트가 빨간불인 커밋도 배포된다.
+
+### 깨졌을 때
+
+| 어디서 깨지나 | 어떻게 되나 |
+|---|---|
+| CI 검사 실패 | **배포가 아예 안 돈다.** 이미 배포된 버전이 그대로 서비스됨 |
+| Render 빌드 실패 | Render 가 새 버전을 안 띄우고 **이전 버전을 계속 서빙** |
+| 배포는 됐는데 버그 | 자동으로 안 잡힌다 → 아래 롤백 |
+
+즉 앞의 둘은 "롤백"이 아니라 **애초에 안 바뀌는 것**이다. 진짜 롤백이 필요한 건 세 번째뿐.
+
+```bash
+# 방법 ① git 으로 되돌리기 (권장 — 히스토리에 남고 CI 를 다시 통과한다)
+git revert <문제커밋> && git push origin main
+
+# 방법 ② 급할 때: Render 대시보드 → Deploys → 이전 배포의 "Rollback"
+```
+
+### 무료 플랜에서 알아둘 것
+
+- **인스턴스를 늘리면 안 된다.** 방 상태(`rooms` Map)가 프로세스 메모리에 있어서,
+  2개로 늘리면 서로 다른 인스턴스에 붙은 사람끼리 같은 방을 못 본다
+  (증상: 코드를 맞게 넣었는데 "방을 찾을 수 없어요"). 키우려면 Redis 어댑터가 먼저다.
+- **유휴 상태로 두면 잠든다** → 첫 접속이 수십 초 걸린다(cold start).
+- **재시작하면 진행 중인 방이 사라진다**(메모리 저장). 약속해서 노는 용도면 문제없다.
+- 무료 티어 조건은 자주 바뀌니 가입 전에 현재 조건을 확인할 것.
 
 ---
 
@@ -258,7 +331,10 @@ npm run dev      # https://localhost:5173
 - [x] Socket.IO 서버 · 방 5종 네임스페이스 · 정적 서빙 겸용(ngrok 원격 플레이)
 - [x] 폰 입력 지연 측정 (실측 편도 6~7ms, 25ms 초과 시 경고)
 - [x] 재접속 처리(좌석 토큰 · 게임 중에도 복귀) · 화면 꺼짐 방지(Wake Lock)
+- [x] 클라우드 배포 + CI/CD (검사 통과 시에만 배포 · 인스턴스 1개 고정)
+- [x] 통합 테스트 — 서버를 띄워 소켓 여러 개를 붙여 한 판을 끝까지 돌린다
 - [ ] 입장코드 **QR 코드** 표시 → 파티 모드(한 모니터를 같이 보며 폰으로 참가)
+- [ ] 방 상태를 Redis 로 (인스턴스 2개 이상 + 재시작에도 판 유지)
 
 **게임별**
 - [x] 요트 — 강체 물리 3D 주사위 · 12족보 + 보너스 · 혼자 하기
