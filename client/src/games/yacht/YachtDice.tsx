@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import DiceBoard from './DiceBoard'
 import ScoreCard from './ScoreCard'
+import SettingsGear from '../../components/FeedbackSettings'
 import { notifyDiceLanded, useRollInput } from './useRollInput'
 import { useYachtController } from './useYachtController'
 import type { YachtView } from './ctrlProtocol'
@@ -301,14 +302,18 @@ export default function YachtDice({
             <div className="font-display text-lg font-black text-[var(--ink)]">요트 다이스</div>
             <div className="label-mono text-[var(--gold)] opacity-70 mt-0.5">YACHT DICE</div>
           </div>
-          <div className="text-right">
-            <div className="yd-pill tabular-nums">
-              R <b className="text-[var(--gold-2)]">{round}</b>
-              <span className="opacity-45">/{CATEGORIES.length}</span>
+          <div className="flex items-center gap-2">
+            <div className="text-right">
+              <div className="yd-pill tabular-nums">
+                R <b className="text-[var(--gold-2)]">{round}</b>
+                <span className="opacity-45">/{CATEGORIES.length}</span>
+              </div>
+              {best > 0 && (
+                <div className="text-[10px] text-[var(--ink-3)] mt-1 tabular-nums">최고 {best}</div>
+              )}
             </div>
-            {best > 0 && (
-              <div className="text-[10px] text-[var(--ink-3)] mt-1 tabular-nums">최고 {best}</div>
-            )}
+            {/* 소리·진동 — 주사위 소리가 제일 큰 화면이라 여기서 바로 끌 수 있어야 한다 */}
+            <SettingsGear tone="theme" accent="var(--gold)" />
           </div>
         </header>
 

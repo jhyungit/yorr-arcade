@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSwing } from '../pingpong/useSwing'
-import { canVibrate, unlockAudio } from '../../lib/feedback'
+import { unlockAudio, vibrate } from '../../lib/feedback'
+import SettingsGear from '../../components/FeedbackSettings'
 import { likelyKeyboard } from '../../lib/device'
 import { socket } from '../../net/socket'
 import MatchLobby from '../../net/MatchLobby'
@@ -250,7 +251,7 @@ export default function ReactionBattle({
     t.current.impact = window.setTimeout(() => {
       m.current.impact = true
       // 경고만 받은 라운드는 약하게, 실제로 맞은 라운드는 강하게
-      if (canVibrate()) navigator.vibrate(hitSide !== 0 ? [0, 45, 25, 70] : 30)
+      vibrate(hitSide !== 0 ? [0, 45, 25, 70] : 30)
       render()
     }, BULLET_MS)
 
@@ -265,7 +266,7 @@ export default function ReactionBattle({
     if (g.phase !== 'waiting') return
     g.phase = 'signal'
     g.signalAt = performance.now()
-    if (canVibrate()) navigator.vibrate([0, 40, 30, 60])
+    vibrate([0, 40, 30, 60])
     render()
     if (g.online === 'host') socket.emit('rx:signal')
 
@@ -331,7 +332,7 @@ export default function ReactionBattle({
         resolve()
         return
       }
-      if (canVibrate()) navigator.vibrate(18)
+      vibrate(18)
 
       if (g.mode === 'solo' || (g.ms1 != null && g.ms2 != null)) {
         resolve()
@@ -363,7 +364,7 @@ export default function ReactionBattle({
         if (g.resolved) return
         g.resolved = true
         g.ms2 = value
-        if (canVibrate()) navigator.vibrate(value === FOUL ? 60 : 18)
+        vibrate(value === FOUL ? 60 : 18)
         socket.emit('rx:react', { ms: value })
         g.impact = false
         g.last = { ...EMPTY_RESULT, ms2: value, pending: true }
@@ -463,7 +464,7 @@ export default function ReactionBattle({
       if (g.online !== 'guest' || g.phase !== 'waiting') return
       g.phase = 'signal'
       g.signalAt = performance.now()
-      if (canVibrate()) navigator.vibrate([0, 40, 30, 60])
+      vibrate([0, 40, 30, 60])
       render()
     }
     // 호스트 판정 결과
@@ -512,7 +513,7 @@ export default function ReactionBattle({
       render()
       t.current.impact = window.setTimeout(() => {
         m.current.impact = true
-        if (canVibrate()) navigator.vibrate(hitSide !== 0 ? [0, 45, 25, 70] : 30)
+        vibrate(hitSide !== 0 ? [0, 45, 25, 70] : 30)
         render()
       }, BULLET_MS)
       if (d.over) {
@@ -617,7 +618,17 @@ export default function ReactionBattle({
         >
           ‹ 게임 선택
         </button>
-        {g.mode !== 'duo' && <InputBadge phoneConnected={phoneConnected} motionOn={motionOn} permission={permission} />}
+        <div className="flex items-center gap-2">
+          {g.mode !== 'duo' && (
+            <InputBadge
+              phoneConnected={phoneConnected}
+              motionOn={motionOn}
+              permission={permission}
+            />
+          )}
+          {/* 플레이 중엔 숨긴다 — 뽑기 타이밍에 오탭하면 판이 날아간다 */}
+          {!playing && <SettingsGear accent="#f0b429" />}
+        </div>
       </div>
 
       {g.phase === 'menu' && (

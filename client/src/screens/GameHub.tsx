@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { GAME_CARDS } from './gameCards'
 import QrCode from '../components/QrCode'
+import SettingsGear from '../components/FeedbackSettings'
 import { isReachableFromPhone } from '../lib/device'
 
 /**
@@ -103,23 +104,27 @@ export default function GameHub({
           <div className="label-mono text-white/40">YORR · ARCADE</div>
           <div className="font-display text-sm font-black text-white/85">게임을 고르세요</div>
         </div>
-        <button
-          onClick={() => setPanel(true)}
-          className="ar-nav flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold"
-        >
-          <span className="text-base leading-none">📱</span>
-          {phoneConnected ? (
-            <span className="flex items-center gap-1.5 text-[#49e08a]">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#49e08a] opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#49e08a]" />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setPanel(true)}
+            className="ar-nav flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold"
+          >
+            <span className="text-base leading-none">📱</span>
+            {phoneConnected ? (
+              <span className="flex items-center gap-1.5 text-[#49e08a]">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#49e08a] opacity-60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-[#49e08a]" />
+                </span>
+                폰 {phoneCount}대
               </span>
-              폰 {phoneCount}대
-            </span>
-          ) : (
-            <span className="text-white/70">폰 연결</span>
-          )}
-        </button>
+            ) : (
+              <span className="text-white/70">폰 연결</span>
+            )}
+          </button>
+          {/* 소리·진동 — 허브에서 한 번 정해 두면 모든 게임이 그 값을 쓴다 */}
+          <SettingsGear />
+        </div>
       </header>
 
       {/* 스테이지 — 선택된 게임의 플레이 장면이 재생된다 */}

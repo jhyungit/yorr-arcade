@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import SettingsGear from '../components/FeedbackSettings'
 
 /**
  * Home — 요트 다이스 입장 화면
@@ -61,9 +62,12 @@ export default function Home({
           <button onClick={onExit} className="yd-ghost" aria-label="허브로 나가기">
             ‹ 나가기
           </button>
-          <span className="label-mono text-[var(--ink-3)]">
-            {connected ? 'ONLINE' : 'CONNECTING…'}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="label-mono text-[var(--ink-3)]">
+              {connected ? 'ONLINE' : 'CONNECTING…'}
+            </span>
+            <SettingsGear tone="theme" accent="var(--gold)" />
+          </div>
         </header>
 
         {/* 타이틀 */}

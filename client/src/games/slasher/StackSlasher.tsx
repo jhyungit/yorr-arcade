@@ -40,8 +40,9 @@ import {
 import { drawGlyph, objectColor } from './logos'
 import { STACKS_BY_CATEGORY, CATEGORIES } from './stacks'
 import { categoryCounts, decideVerdict } from './verdict'
-import { canVibrate } from '../../lib/feedback'
+import { onFeedbackChange, soundEnabled, vibrate } from '../../lib/feedback'
 import { socket } from '../../net/socket'
+import SettingsGear from '../../components/FeedbackSettings'
 
 /**
  * StackSlasher — 기술스택 슬래셔 (Fruit-Ninja 감성, 완전 클라이언트)
@@ -144,7 +145,6 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
   const gameRef = useRef<Runtime>(makeRuntime())
   const audioRef = useRef<Fx | null>(null)
   const startRef = useRef<() => void>(() => {})
-  const vibeRef = useRef(true)
   // 포인터 핸들러 브리지 (JSX → effect 내부 함수)
   const downRef = useRef<(x: number, y: number) => void>(() => {})
   const moveRef = useRef<(x: number, y: number) => void>(() => {})
@@ -167,11 +167,6 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
     const v = Number(localStorage.getItem(BEST_KEY) || 0)
     return Number.isFinite(v) ? v : 0
   })
-  const [vibeOn, setVibeOn] = useState(true)
-  useEffect(() => {
-    vibeRef.current = vibeOn
-  }, [vibeOn])
-
   // ── 게임 루프 & 로직 (마운트 시 1회 구성) ──
   useEffect(() => {
     const canvas = canvasRef.current
@@ -181,8 +176,9 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
     if (!ctx) return
     const g = gameRef.current
 
+    // 설정(전역)이 꺼져 있거나 기기가 못 하면 vibrate 가 알아서 무시한다
     const vibe = (p: number | number[]) => {
-      if (vibeRef.current && canVibrate()) navigator.vibrate(p)
+      vibrate(p)
     }
 
     const commit = () => {
@@ -594,10 +590,16 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
     }
   }, [])
 
+  // 효과음 엔진 + 설정의 "소리" 스위치 따라가기 (마스터 게인만 내린다)
   useEffect(() => {
     const engine = new Fx()
     audioRef.current = engine
-    return () => engine.dispose()
+    engine.setMuted(!soundEnabled())
+    const off = onFeedbackChange(() => engine.setMuted(!soundEnabled()))
+    return () => {
+      off()
+      engine.dispose()
+    }
   }, [])
 
   // 폰 컨트롤러(터치패드) 연동: 폰에서 그은 좌표(정규화 0~1)로 노트북 블레이드를 구동.
@@ -699,15 +701,9 @@ export default function StackSlasher({ onExit }: { onExit: () => void }) {
         >
           ‹ 게임 선택
         </button>
-        {ui.phase !== 'playing' && canVibrate() && (
-          <button
-            onClick={() => setVibeOn((v) => !v)}
-            className={`pointer-events-auto text-xs rounded-full px-3 py-1 border ${
-              vibeOn ? 'border-[#22d3ee]/60 text-[#22d3ee]' : 'border-white/20 text-white/50'
-            }`}
-          >
-            📳 진동 {vibeOn ? 'ON' : 'OFF'}
-          </button>
+        {/* 진동 pill → 공용 톱니바퀴(소리·진동). 플레이 중엔 숨겨서 오탭을 막는다. */}
+        {ui.phase !== 'playing' && (
+          <SettingsGear className="pointer-events-auto" accent="#22d3ee" />
         )}
       </div>
 
@@ -1122,9 +1118,12 @@ function StyleFx() {
  * Fx — 아주 작은 WebAudio 효과음 (슬라이스/함정/피버).
  * 외부 오디오 파일 없이 오실레이터로 즉석 합성. iOS 는 시작 버튼(제스처)에서 unlock.
  */
+const MASTER_VOL = 0.32
+
 class Fx {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
+  private muted = false
 
   unlock() {
     try {
@@ -1134,13 +1133,19 @@ class Fx {
           (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
         this.ctx = new C()
         this.master = this.ctx.createGain()
-        this.master.gain.value = 0.32
+        this.master.gain.value = this.muted ? 0 : MASTER_VOL
         this.master.connect(this.ctx.destination)
       }
       if (this.ctx.state === 'suspended') void this.ctx.resume()
     } catch {
       /* 오디오 불가 환경이면 무시 */
     }
+  }
+
+  /** 설정의 "소리" 스위치. unlock 보다 먼저 불려도 되게 muted 를 기억해 둔다. */
+  setMuted(muted: boolean) {
+    this.muted = muted
+    if (this.master) this.master.gain.value = muted ? 0 : MASTER_VOL
   }
 
   private blip(freq: number, dur: number, type: OscillatorType, vol: number, slideTo?: number) {

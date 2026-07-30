@@ -17,8 +17,12 @@
 let audioCtx: AudioContext | null = null
 
 /* 사용자가 켜고 끌 수 있는 피드백 스위치.
-   폰 컨트롤러의 설정(톱니바퀴)에서 바꾸고 localStorage 에 남긴다 —
-   조용한 곳에서 소리를 껐는데 새로고침하면 다시 켜지는 게 제일 짜증난다. */
+   어느 화면의 톱니바퀴(components/FeedbackSettings)에서 바꿔도 여기로 들어오고
+   localStorage 에 남는다 — 조용한 곳에서 소리를 껐는데 새로고침하면 다시
+   켜지는 게 제일 짜증난다.
+
+   **이 파일이 소리·진동의 단일 소스다.** 화면마다 따로 state 를 두지 않는다.
+   (예전엔 리듬·슬래셔가 각자 vibeOn 을 갖고 있어서 설정에서 끈 게 안 먹었다) */
 const SOUND_KEY = 'yorr.sound'
 const VIBE_KEY = 'yorr.vibe'
 
@@ -42,17 +46,51 @@ function save(key: string, on: boolean) {
   }
 }
 
+/* 설정이 바뀌었음을 알려 줄 곳들.
+   ① 톱니바퀴가 여러 화면에 떠 있어도 같은 값을 보이게
+   ② 리듬·슬래셔는 자체 오디오 엔진(마스터 게인)을 갖고 있어서, 소리를 끄면
+      그쪽 볼륨도 같이 내려야 한다 — beep/clack 만 막아선 조용해지지 않는다. */
+const listeners = new Set<() => void>()
+
+/** 설정 변경 구독. 반환값을 호출하면 해제 (useEffect cleanup 에 그대로 쓴다) */
+export function onFeedbackChange(fn: () => void) {
+  listeners.add(fn)
+  return () => {
+    listeners.delete(fn)
+  }
+}
+
 export function setVibrationEnabled(on: boolean) {
+  if (vibrationOn === on) return
   vibrationOn = on
   save(VIBE_KEY, on)
+  listeners.forEach((fn) => fn())
 }
 export function setSoundEnabled(on: boolean) {
+  if (soundOn === on) return
   soundOn = on
   save(SOUND_KEY, on)
+  listeners.forEach((fn) => fn())
 }
 /** 지금 설정값 (UI 초기 상태를 맞추는 데 쓴다) */
 export function feedbackSettings() {
   return { sound: soundOn, vibration: vibrationOn }
+}
+/** 소리를 내도 되는가 — 자체 오디오 엔진을 가진 게임이 물어본다 */
+export function soundEnabled() {
+  return soundOn
+}
+
+/**
+ * 게이트를 통과한 진동. 설정이 꺼져 있거나 기기가 못 하면 아무 일도 안 한다.
+ * **navigator.vibrate 를 직접 부르지 말고 항상 이걸 쓴다** — 직접 부르면
+ * 설정에서 진동을 껐는데도 계속 울린다(실제로 그랬다).
+ * 반환값: 실제로 진동했는지 (소리·플래시로 대체할지 판단할 때).
+ */
+export function vibrate(pattern: number | number[]) {
+  if (!vibrationOn || !canVibrate()) return false
+  navigator.vibrate(pattern)
+  return true
 }
 
 /**
@@ -117,18 +155,18 @@ function beep(freq: number, durationMs: number, volume = 0.2) {
  * 대신 "내 차례" 같은 중요한 신호는 feedbackTurn 이 소리·플래시로 알린다.
  */
 export function feedbackTap(strong = false) {
-  if (canVibrate() && vibrationOn) navigator.vibrate(strong ? 22 : 11)
+  vibrate(strong ? 22 : 11)
 }
 
 /** 흔드는 중 피드백: 약한 진동 + 아주 짧은 낮은 톡 소리 */
 export function feedbackShake() {
-  if (canVibrate() && vibrationOn) navigator.vibrate(25)
+  vibrate(25)
   beep(220, 40, 0.08)
 }
 
 /** 던지기(확정) 피드백: 강한 진동 + 높은 톤 */
 export function feedbackThrow() {
-  if (canVibrate() && vibrationOn) navigator.vibrate([0, 60, 40, 120])
+  vibrate([0, 60, 40, 120])
   beep(660, 120, 0.25)
 }
 
@@ -143,7 +181,7 @@ export function feedbackThrow() {
  *   (단 iOS 는 사용자 탭 안에서 unlockAudio() 를 한 번 호출해 둬야 한다)
  */
 export function feedbackTurn() {
-  if (canVibrate() && vibrationOn) navigator.vibrate([0, 70, 60, 70])
+  vibrate([0, 70, 60, 70])
   beep(784, 110, 0.22) // G5
   window.setTimeout(() => beep(1046, 150, 0.22), 130) // C6
 }
@@ -194,6 +232,6 @@ export function feedbackDiceHit(strength: number) {
 
 /** 다 굴러 멈췄을 때의 '툭' — 조금 낮고 짧게 */
 export function feedbackDiceLand() {
-  if (canVibrate() && vibrationOn) navigator.vibrate(30)
+  vibrate(30)
   clack(760 + Math.random() * 260, 90, 0.13, 1.1)
 }

@@ -11,6 +11,7 @@ import OnlineLobby from './OnlineLobby'
 import { socket } from '../../net/socket'
 import { startLatencyProbe, type LatencyStat } from '../../net/latency'
 import { feedbackShake, feedbackThrow, unlockAudio } from '../../lib/feedback'
+import SettingsGear from '../../components/FeedbackSettings'
 import { createScene, type FrameState, type PingPongScene } from './scene3d'
 import {
   FAULT_BAND,
@@ -812,14 +813,19 @@ export default function PingPong({ onExit, phoneConnected = false }: PingPongPro
             <span className="label-mono text-white/40">PING · PONG</span>
           )}
         </div>
-        <button
-          onClick={enableMotion}
-          className={`text-xs rounded-full px-3 py-1 border ${
-            permission === 'granted' ? 'border-[#49e08a]/50 text-[#49e08a]' : 'border-white/20 text-white/70'
-          }`}
-        >
-          {permission === 'granted' ? '📳 스윙 ON' : '📳 폰 스윙'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={enableMotion}
+            className={`text-xs rounded-full px-3 py-1 border ${
+              permission === 'granted'
+                ? 'border-[#49e08a]/50 text-[#49e08a]'
+                : 'border-white/20 text-white/70'
+            }`}
+          >
+            {permission === 'granted' ? '📳 스윙 ON' : '📳 폰 스윙'}
+          </button>
+          <SettingsGear accent="#2b8fe0" />
+        </div>
       </div>
 
       {/* 점수 */}

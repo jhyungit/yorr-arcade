@@ -42,7 +42,11 @@
 2. **폰 카메라로 QR 을 찍으면 끝.** `?ctrl=CODE` 로 열려 코드 입력 없이 바로 연결된다
    (QR 을 못 찍는 상황을 위해 4자리 코드와 주소도 같이 띄운다)
 3. 폰이 컨트롤러 화면으로 바뀐다. **노트북이 고른 게임에 맞춰 폰 UI 도 같이 바뀐다**(`disp:game`)
-   폰 우측 상단 **⚙️** 에서 소리·진동을 켜고 끌 수 있다(localStorage 에 저장)
+
+**소리·진동 끄기** — 모든 화면 우측 상단 **⚙️**. 허브·게임·폰 컨트롤러 어디서 바꿔도
+같은 스위치다(값은 [feedback.ts](client/src/lib/feedback.ts) 가 들고 localStorage 에 저장).
+게임마다 따로 두지 않는 이유: 같은 저장 키를 여러 화면이 각자 관리하면 서로 밟고,
+"소리 꺼"는 게임 설정보다 기기 설정에 가까워서 게임마다 다시 끄는 건 짜증난다.
 
 - **한 노트북에 폰 여러 대**를 붙일 수 있다 (퀵드로우는 2대면 폰끼리 결투)
 - **요트만 폰이 "양방향"이다.** 다른 게임은 폰이 휘두르기만 보내면 되지만, 요트는
@@ -142,7 +146,8 @@ YORR/
 │     │  ├─ reaction/            # ★황야의 퀵드로우 (duel.ts = 결투 판정)
 │     │  └─ slasher/             # ★기술스택 슬래셔 (engine/logos/stacks/verdict)
 │     ├─ components/             # 온라인 방 공용 (점수판·인원·타이머·리액션)
-│     │  └─ QrCode.tsx           #   ★QR — 모듈 격자를 SVG path 로 직접 그린다
+│     │  ├─ QrCode.tsx           #   ★QR — 모듈 격자를 SVG path 로 직접 그린다
+│     │  └─ FeedbackSettings.tsx #   ⚙️ 소리·진동 토글 (모든 화면 공용)
 │     ├─ game/yacht.ts           # ★요트 규칙·점수 계산 (순수 로직)
 │     ├─ net/
 │     │  ├─ socket.ts            #   Socket.IO 싱글턴
@@ -152,7 +157,7 @@ YORR/
 │     │  └─ latency.ts           #   폰 입력 지연 측정
 │     ├─ hooks/useMotionDice.ts  # 센서(흔들기/던지기) 감지 — 요트용
 │     └─ lib/
-│        ├─ feedback.ts          # 진동/효과음/화면흔들림
+│        ├─ feedback.ts          # 진동/효과음/화면흔들림 + 소리·진동 설정(단일 소스)
 │        └─ wakeLock.ts          # 플레이 중 화면 꺼짐 방지
 ├─ server/                       # 실시간 서버 (Node.js + Express + Socket.IO)
 │  └─ index.js                   # 폰 페어링 중계 · 요트 방 · 온라인 1:1 매치 · 정적 서빙

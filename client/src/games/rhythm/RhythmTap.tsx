@@ -20,10 +20,11 @@ import {
   type MapOptions,
   type Note,
 } from './beatmap'
-import { canVibrate } from '../../lib/feedback'
+import { onFeedbackChange, soundEnabled, vibrate } from '../../lib/feedback'
 import { likelyKeyboard } from '../../lib/device'
 import { socket } from '../../net/socket'
 import MatchLobby from '../../net/MatchLobby'
+import SettingsGear from '../../components/FeedbackSettings'
 
 // 레인별 키보드 표시용 라벨 (LANE_KEYS 의 'KeyD' → 'D')
 const LANE_KEY_LABELS = LANE_KEYS.map((k) => k.replace('Key', ''))
@@ -158,7 +159,6 @@ export default function RhythmTap({ onExit, phoneConnected = false }: RhythmTapP
     swing: false,
   })
   const [label, setLabel] = useState<{ text: string; kind: JudgeKind } | null>(null)
-  const [vibeOn, setVibeOn] = useState(true)
   // 온라인 대전 상태
   const [lobbyOpen, setLobbyOpen] = useState(false)
   const [online, setOnline] = useState<{ role: 'host' | 'guest' } | null>(null)
@@ -171,11 +171,6 @@ export default function RhythmTap({ onExit, phoneConnected = false }: RhythmTapP
   } | null>(null)
   const [oppLeft, setOppLeft] = useState(false)
   const [waitingStart, setWaitingStart] = useState(false) // guest: 방장 시작 대기
-
-  const vibeRef = useRef(vibeOn)
-  useEffect(() => {
-    vibeRef.current = vibeOn
-  }, [vibeOn])
 
   // ── 메인 루프 & 게임 로직 (마운트 시 1회 구성) ──
   useEffect(() => {
@@ -317,7 +312,7 @@ export default function RhythmTap({ onExit, phoneConnected = false }: RhythmTapP
         g.score += Math.round(JUDGE_SCORE[kind] * mult)
         spawnParticles(n.lane, kind)
         audioRef.current?.playHit(kind)
-        if (vibeRef.current && canVibrate()) navigator.vibrate(kind === 'perfect' ? 22 : 12)
+        vibrate(kind === 'perfect' ? 22 : 12)
       }
       showLabel(kind)
       commit()
@@ -372,7 +367,7 @@ export default function RhythmTap({ onExit, phoneConnected = false }: RhythmTapP
         const beat = Math.floor(t / g.beatmap.beatMs)
         if (beat !== g.lastBeat) {
           g.lastBeat = beat
-          if (vibeRef.current && canVibrate()) navigator.vibrate(8)
+          vibrate(8)
           // 스윙 모드: 폰(컨트롤러)이 손으로 비트를 느끼도록 신호
           if (g.swing) socket.emit('game:beat')
         }
@@ -622,11 +617,18 @@ export default function RhythmTap({ onExit, phoneConnected = false }: RhythmTapP
     }
   }, [])
 
-  // 오디오 엔진 준비/정리
+  // 오디오 엔진 준비/정리 + 설정의 "소리" 스위치 따라가기
+  //  곡 예약은 그대로 두고 마스터 게인만 0 으로 내린다 — 판정이 곡 시계를 쓰므로
+  //  엔진을 멈추면 음소거가 아니라 게임이 어긋난다.
   useEffect(() => {
     const engine = new AudioEngine()
     audioRef.current = engine
-    return () => engine.dispose()
+    engine.setMuted(!soundEnabled())
+    const off = onFeedbackChange(() => engine.setMuted(!soundEnabled()))
+    return () => {
+      off()
+      engine.dispose()
+    }
   }, [])
 
   // 온라인 대전: 곡 시작 수신(게스트) / 상대 진행상황 / 상대 이탈
@@ -713,26 +715,22 @@ export default function RhythmTap({ onExit, phoneConnected = false }: RhythmTapP
             </div>
           </div>
         </div>
-        {ui.swing ? (
-          <span
-            className={`text-xs rounded-full px-3 py-1 border ${
-              phoneConnected ? 'border-[#4ade80]/60 text-[#4ade80]' : 'border-white/20 text-white/50'
-            }`}
-          >
-            {phoneConnected ? '🎮 폰 채 연결됨' : '🎮 키보드 Space/↓'}
-          </span>
-        ) : canVibrate() ? (
-          <button
-            onClick={() => setVibeOn((v) => !v)}
-            className={`text-xs rounded-full px-3 py-1 border ${
-              vibeOn ? 'border-[#22d3ee]/60 text-[#22d3ee]' : 'border-white/20 text-white/50'
-            }`}
-          >
-            📳 진동 {vibeOn ? 'ON' : 'OFF'}
-          </button>
-        ) : (
-          <span className="label-mono text-white/25">RHYTHM</span>
-        )}
+        {/* 진동 토글은 여기 있던 pill 에서 공용 톱니바퀴로 옮겼다 —
+            게임마다 따로 두면 저장도 안 되고 다른 화면의 설정과 어긋난다. */}
+        <div className="flex items-center gap-2">
+          {ui.swing && (
+            <span
+              className={`text-xs rounded-full px-3 py-1 border ${
+                phoneConnected
+                  ? 'border-[#4ade80]/60 text-[#4ade80]'
+                  : 'border-white/20 text-white/50'
+              }`}
+            >
+              {phoneConnected ? '🎮 폰 채 연결됨' : '🎮 키보드 Space/↓'}
+            </span>
+          )}
+          <SettingsGear accent="#22d3ee" />
+        </div>
       </div>
 
       {/* 캔버스 스테이지 + 레인 터치 영역 */}
@@ -1144,12 +1142,15 @@ interface SoundEvent {
   freq?: number
 }
 
+const MASTER_VOL = 0.5
+
 class AudioEngine {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
   private events: SoundEvent[] = []
   private nextIdx = 0
   private timer: number | null = null
+  private muted = false
 
   /** 사용자 제스처(시작 버튼) 안에서 호출 → iOS 포함 오디오 깨우기 */
   unlock() {
@@ -1160,13 +1161,19 @@ class AudioEngine {
           (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
         this.ctx = new Ctx()
         this.master = this.ctx.createGain()
-        this.master.gain.value = 0.5
+        this.master.gain.value = this.muted ? 0 : MASTER_VOL
         this.master.connect(this.ctx.destination)
       }
       if (this.ctx.state === 'suspended') void this.ctx.resume()
     } catch {
       // 오디오 불가 환경이면 조용히 무시(게임은 계속됨)
     }
+  }
+
+  /** 설정의 "소리" 스위치. unlock 보다 먼저 불려도 되게 muted 를 기억해 둔다. */
+  setMuted(muted: boolean) {
+    this.muted = muted
+    if (this.master) this.master.gain.value = muted ? 0 : MASTER_VOL
   }
 
   /** 채보를 소리 이벤트로 펼쳐서 예약 시작. startDelaySec 후 곡 0ms 시작. */

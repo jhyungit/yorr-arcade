@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import QrCode from '../components/QrCode'
+import SettingsGear from '../components/FeedbackSettings'
 import { seatColor } from '../components/PlayerStrip'
 import { isReachableFromPhone } from '../lib/device'
 import type { RoomState } from '../net/types'
@@ -46,7 +47,10 @@ export default function Lobby({ room, isHost, youId, onStart, onLeave }: LobbyPr
           <button onClick={onLeave} className="yd-ghost" aria-label="방에서 나가기">
             ‹ 나가기
           </button>
-          <span className="label-mono text-[var(--ink-3)]">WAITING ROOM · 대기실</span>
+          <div className="flex items-center gap-2">
+            <span className="label-mono text-[var(--ink-3)]">WAITING ROOM · 대기실</span>
+            <SettingsGear tone="theme" accent="var(--gold)" />
+          </div>
         </header>
 
         {/* 초대 코드 — 탭하면 복사 */}

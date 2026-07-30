@@ -4,6 +4,7 @@ import ScoreBoard from '../components/ScoreBoard'
 import PlayerStrip, { seatColor } from '../components/PlayerStrip'
 import RoundTimer from '../components/RoundTimer'
 import ReactionDock from '../components/ReactionDock'
+import SettingsGear from '../components/FeedbackSettings'
 import { notifyDiceLanded, useRollInput } from '../games/yacht/useRollInput'
 import { useYachtController } from '../games/yacht/useYachtController'
 import type { YachtView } from '../games/yacht/ctrlProtocol'
@@ -311,9 +312,12 @@ export default function PlayScreen({
               {room.players.length}인 턴제
             </div>
           </div>
-          <div className="yd-pill tabular-nums">
-            <span className="tracking-[0.14em] text-[var(--gold-2)]">{room.code}</span>
-            <span className="mx-1.5 opacity-30">·</span>R {room.round}/{room.totalRounds}
+          <div className="flex items-center gap-2">
+            <div className="yd-pill tabular-nums">
+              <span className="tracking-[0.14em] text-[var(--gold-2)]">{room.code}</span>
+              <span className="mx-1.5 opacity-30">·</span>R {room.round}/{room.totalRounds}
+            </div>
+            <SettingsGear tone="theme" accent="var(--gold)" />
           </div>
         </header>
 

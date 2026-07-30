@@ -1,5 +1,6 @@
 import { CATEGORIES, totalScore, upperBonus } from '../game/yacht'
 import { seatColor } from '../components/PlayerStrip'
+import SettingsGear from '../components/FeedbackSettings'
 import type { RankRow, RoomState } from '../net/types'
 
 /**
@@ -59,7 +60,9 @@ export default function Results({
   }
 
   return (
-    <div className="yd flex min-h-full flex-col">
+    <div className="yd relative flex min-h-full flex-col">
+      {/* 헤더가 없는 화면이라 톱니바퀴만 모서리에 띄운다 (다른 화면과 같은 자리) */}
+      <SettingsGear className="absolute right-4 top-4" tone="theme" accent="var(--gold)" />
       <div className="mx-auto my-auto w-full max-w-[460px] px-5 py-6">
         <div className="mb-5 text-center">
           <div className="mb-1 text-5xl">🏁</div>
