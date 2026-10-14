@@ -22,6 +22,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import express from 'express'
 import { Server } from 'socket.io'
+import { recordWeekly, weeklyTop } from './ranking.js'
 
 const PORT = process.env.PORT || 3001
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -271,6 +272,15 @@ function ranking(room) {
 
 // --- 턴 진행 ---
 
+function finishGame(io, room) {
+  room.status = 'finished'
+  room.deadline = null
+  room.turnSeq += 1
+  io.to(room.code).emit('room:finished', { ranking: ranking(room) })
+  // 점수는 서버가 계산한 값만 기록한다 (클라 보고값 X)
+  recordWeekly(room.players.map((p) => [p.nickname, p.total]))
+}
+
 function clearTurnTimer(room) {
   if (room.timer) {
     clearTimeout(room.timer)
@@ -367,10 +377,7 @@ function advanceTurn(io, room) {
   }
 
   if (round > TOTAL_ROUNDS) {
-    room.status = 'finished'
-    room.deadline = null
-    room.turnSeq += 1
-    io.to(room.code).emit('room:finished', { ranking: ranking(room) })
+    finishGame(io, room)
     broadcast(io, room)
     return
   }
@@ -403,6 +410,7 @@ function resetRoom(room) {
 
 const app = express()
 app.get('/health', (_req, res) => res.type('text').send('ok'))
+app.get('/api/ranking', async (_req, res) => res.json(await weeklyTop()))
 
 // 빌드 결과가 있으면 정적 서빙 + SPA 폴백 (원격 배포용)
 const hasDist = fs.existsSync(path.join(DIST, 'index.html'))
@@ -866,10 +874,7 @@ function dropPlayer(io, room, player, explicit) {
       if (wrapped) room.round += 1
       if (room.round > TOTAL_ROUNDS) {
         clearTurnTimer(room)
-        room.status = 'finished'
-        room.deadline = null
-        room.turnSeq += 1
-        io.to(room.code).emit('room:finished', { ranking: ranking(room) })
+        finishGame(io, room)
       } else {
         beginTurn(io, room)
       }

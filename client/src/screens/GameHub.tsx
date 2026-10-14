@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { GAME_CARDS } from './gameCards'
 import QrCode from '../components/QrCode'
 import SettingsGear from '../components/FeedbackSettings'
+import RankingTicker from '../components/RankingTicker'
 import { isReachableFromPhone } from '../lib/device'
 
 /**
@@ -97,6 +98,7 @@ export default function GameHub({
   return (
     <div className="arcade flex flex-col" style={{ ['--ac' as string]: card.accent }}>
       <Brackets />
+      <RankingTicker />
 
       {/* 상단 바 */}
       <header className="relative z-10 flex shrink-0 items-center justify-between px-5 py-3 sm:px-8">

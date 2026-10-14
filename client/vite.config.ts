@@ -63,6 +63,7 @@ export default defineConfig({
     // → 폰은 5173 한 포트로만 접속하면 되고(추가 포트 노출 X), CORS 문제도 없다.
     //   /socket.io 로 들어오는 (WebSocket 포함) 요청을 서버로 넘긴다.
     proxy: {
+      '/api': 'http://localhost:3001',
       '/socket.io': {
         target: 'http://localhost:3001',
         ws: true, // WebSocket 프록시 켜기
