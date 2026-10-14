@@ -20,6 +20,13 @@ export default function RankingTicker() {
   const [secs, setSecs] = useState(0)
 
   useEffect(() => {
+    // ?rankdemo — 실제 랭킹 대신 더미 10명(동점 포함)으로 화면만 확인
+    if (new URLSearchParams(location.search).has('rankdemo')) {
+      const demo = [['요트왕', 287], ['주사위장인', 262], ['정현', 262], ['상은', 241], ['민서', 233],
+        ['개발자', 187], ['럭키세븐', 175], ['풀하우스', 168], ['초보', 142], ['익명', 120]] as const
+      setRows(demo.map(([nickname, score], i) => ({ nickname, score, rank: score === 262 ? 2 : i + 1 })))
+      return
+    }
     const load = () => {
       if (document.hidden) return
       fetch('/api/ranking')
