@@ -71,7 +71,7 @@ function Die({ n, cls, style }: { n: number; cls: string; style: React.CSSProper
 function YachtArt({ live }: ArtProps) {
   return (
     <div
-      className={liveCls(live, 'absolute inset-0 overflow-hidden')}
+      className={liveCls(live, 'absolute inset-0 overflow-hidden [container-type:size]')}
       style={{ background: 'radial-gradient(120% 95% at 50% -12%, #3d8f6c, #1d5c46 46%, #0d2822 100%)' }}
     >
       {/* 펠트 결 */}
@@ -84,9 +84,22 @@ function YachtArt({ live }: ArtProps) {
         className="absolute left-1/2 top-[-30%] h-[70%] w-[70%] -translate-x-1/2 rounded-full blur-2xl"
         style={{ background: 'radial-gradient(closest-side,rgba(216,162,74,0.55),transparent)' }}
       />
-      <Die n={5} cls="ar-die0" style={{ left: '14%', top: '38%', width: '23%', aspectRatio: '1', rotate: '-15deg' }} />
-      <Die n={3} cls="ar-die1" style={{ left: '39%', top: '26%', width: '26%', aspectRatio: '1', rotate: '8deg' }} />
-      <Die n={6} cls="ar-die2" style={{ left: '65%', top: '42%', width: '22%', aspectRatio: '1', rotate: '-6deg' }} />
+      {/* 다섯 알 모두 6 → 요트! */}
+      {[-12, 7, -4, 10, -8].map((r, i) => (
+        <Die
+          key={i}
+          n={6}
+          cls={`ar-die${i}`}
+          style={{ left: `${8 + i * 17.5}%`, top: '44%', width: '15%', aspectRatio: '1', rotate: `${r}deg` }}
+        />
+      ))}
+      <div className="font-display absolute inset-x-0 top-[12%] flex justify-center gap-[1.5%] text-[11cqh] font-black">
+        {'YACHT!'.split('').map((ch, i) => (
+          <span key={i} className="ar-yacht-l" style={{ animationDelay: `${i * 0.07}s` }}>
+            {ch}
+          </span>
+        ))}
+      </div>
       {/* 바닥 그림자 */}
       <div
         className="absolute inset-x-[10%] bottom-[10%] h-[14%] rounded-full blur-md"

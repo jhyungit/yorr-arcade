@@ -736,8 +736,23 @@ body {
   80%, 100% { transform: translateY(0) rotate(360deg); }
 }
 .ar-live .ar-die { animation: ar-die 3s cubic-bezier(0.3, 0.7, 0.4, 1) infinite; }
-.ar-live .ar-die1 { animation-delay: 0.14s; }
-.ar-live .ar-die2 { animation-delay: 0.28s; }
+.ar-live .ar-die1 { animation-delay: 0.1s; }
+.ar-live .ar-die2 { animation-delay: 0.2s; }
+.ar-live .ar-die3 { animation-delay: 0.3s; }
+.ar-live .ar-die4 { animation-delay: 0.4s; }
+/* 다 떨어져 멈춘 뒤 YACHT! 글자가 하나씩 튀어 오른다 */
+.ar-yacht-l {
+  display: inline-block;
+  color: #ffd36b;
+  text-shadow: 0 3px 0 #8a5a12, 0 0 18px rgba(255, 196, 80, 0.7);
+}
+@keyframes ar-yacht-l {
+  0%, 74% { opacity: 0; transform: translateY(30%) scale(0.4); }
+  80% { opacity: 1; transform: translateY(-12%) scale(1.25); }
+  85%, 95% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(0) scale(1); }
+}
+.ar-live .ar-yacht-l { animation: ar-yacht-l 3s ease-out infinite; }
 
 /* 핑퐁: 공이 먼 코트 ↔ 가까운 코트를 오간다 (가까울수록 크게) */
 @keyframes ar-ball {
@@ -1096,6 +1111,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   /* 허브 스테이지의 플레이 시뮬레이션은 장식이라 통째로 끈다 (정지 화면으로 남는다) */
   .ar-live .ar-die,
+  .ar-live .ar-yacht-l,
   .ar-live .ar-ball,
   .ar-live .ar-pad-near,
   .ar-live .ar-pad-far,
