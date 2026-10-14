@@ -727,15 +727,19 @@ body {
    ============================================================= */
 
 /* 요트: 주사위가 위에서 떨어져 튀고 구른다 */
+/* 한 바퀴 4.2초: 낙하·튕김(~2.8초) → YACHT! → 3.6~3.8초에 묶음째 사라짐 → 0.4초 쉬고 다시 */
 @keyframes ar-die {
   0% { transform: translateY(-180%) rotate(0deg); }
-  31% { transform: translateY(0) rotate(310deg); }
-  39% { transform: translateY(-26%) rotate(340deg); }
-  49% { transform: translateY(0) rotate(356deg); }
-  54% { transform: translateY(-8%) rotate(360deg); }
-  59%, 100% { transform: translateY(0) rotate(360deg); }
+  30% { transform: translateY(0) rotate(310deg); }
+  38.5% { transform: translateY(-26%) rotate(340deg); }
+  47.5% { transform: translateY(0) rotate(356deg); }
+  52.5% { transform: translateY(-8%) rotate(360deg); }
+  57.5%, 90.4% { opacity: 1; transform: translateY(0) rotate(360deg); }
+  /* 지연(delay) 때문에 다음 바퀴로 넘어간 알이 바닥에 남아 보이지 않게 숨겨 둔다 */
+  90.5%, 100% { opacity: 0; transform: translateY(-180%) rotate(0deg); }
 }
-.ar-live .ar-die { animation: ar-die 4.1s cubic-bezier(0.3, 0.7, 0.4, 1) infinite; }
+}
+.ar-live .ar-die { animation: ar-die 4.2s cubic-bezier(0.3, 0.7, 0.4, 1) infinite; }
 .ar-live .ar-die1 { animation-delay: 0.1s; }
 .ar-live .ar-die2 { animation-delay: 0.2s; }
 .ar-live .ar-die3 { animation-delay: 0.3s; }
@@ -747,13 +751,17 @@ body {
   text-shadow: 0 3px 0 #8a5a12, 0 0 18px rgba(255, 196, 80, 0.7);
 }
 @keyframes ar-yacht-l {
-  0%, 54% { opacity: 0; transform: translateY(30%) scale(0.4); }
-  59% { opacity: 1; transform: translateY(-12%) scale(1.25); }
-  62%, 82% { opacity: 1; transform: translateY(0) scale(1); }
-  /* 글자가 다 사라지고 0.2초쯤 쉰 뒤 다음 주사위가 떨어진다 */
-  85%, 100% { opacity: 0; transform: translateY(0) scale(1); }
+  0%, 66.7% { opacity: 0; transform: translateY(30%) scale(0.4); }
+  71% { opacity: 1; transform: translateY(-12%) scale(1.25); }
+  74%, 90.6% { opacity: 1; transform: translateY(0) scale(1); }
+  90.7%, 100% { opacity: 0; }
 }
-.ar-live .ar-yacht-l { animation: ar-yacht-l 4.1s ease-out infinite; }
+.ar-live .ar-yacht-l { animation: ar-yacht-l 4.2s ease-out infinite; }
+@keyframes ar-yacht-set {
+  0%, 85.7% { opacity: 1; }
+  90.5%, 100% { opacity: 0; }
+}
+.ar-live .ar-yacht-set { animation: ar-yacht-set 4.2s linear infinite; }
 
 /* 핑퐁: 공이 먼 코트 ↔ 가까운 코트를 오간다 (가까울수록 크게) */
 @keyframes ar-ball {
@@ -1113,6 +1121,7 @@ body {
   /* 허브 스테이지의 플레이 시뮬레이션은 장식이라 통째로 끈다 (정지 화면으로 남는다) */
   .ar-live .ar-die,
   .ar-live .ar-yacht-l,
+  .ar-live .ar-yacht-set,
   .ar-live .ar-ball,
   .ar-live .ar-pad-near,
   .ar-live .ar-pad-far,

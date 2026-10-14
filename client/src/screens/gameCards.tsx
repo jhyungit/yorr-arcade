@@ -84,7 +84,8 @@ function YachtArt({ live }: ArtProps) {
         className="absolute left-1/2 top-[-30%] h-[70%] w-[70%] -translate-x-1/2 rounded-full blur-2xl"
         style={{ background: 'radial-gradient(closest-side,rgba(216,162,74,0.55),transparent)' }}
       />
-      {/* 다섯 알 모두 6 → 요트! */}
+      {/* 다섯 알 모두 6 → 요트! 주사위와 글자는 한 묶음으로 함께 사라진다 */}
+      <div className="ar-yacht-set absolute inset-0">
       {[-12, 7, -4, 10, -8].map((r, i) => (
         <Die
           key={i}
@@ -99,6 +100,7 @@ function YachtArt({ live }: ArtProps) {
             {ch}
           </span>
         ))}
+      </div>
       </div>
       {/* 바닥 그림자 */}
       <div
