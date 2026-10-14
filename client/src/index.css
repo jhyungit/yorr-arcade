@@ -729,13 +729,13 @@ body {
 /* 요트: 주사위가 위에서 떨어져 튀고 구른다 */
 @keyframes ar-die {
   0% { transform: translateY(-180%) rotate(0deg); }
-  36% { transform: translateY(0) rotate(310deg); }
-  46% { transform: translateY(-26%) rotate(340deg); }
-  57% { transform: translateY(0) rotate(356deg); }
-  63% { transform: translateY(-8%) rotate(360deg); }
-  69%, 100% { transform: translateY(0) rotate(360deg); }
+  31% { transform: translateY(0) rotate(310deg); }
+  39% { transform: translateY(-26%) rotate(340deg); }
+  49% { transform: translateY(0) rotate(356deg); }
+  54% { transform: translateY(-8%) rotate(360deg); }
+  59%, 100% { transform: translateY(0) rotate(360deg); }
 }
-.ar-live .ar-die { animation: ar-die 3.5s cubic-bezier(0.3, 0.7, 0.4, 1) infinite; }
+.ar-live .ar-die { animation: ar-die 4.1s cubic-bezier(0.3, 0.7, 0.4, 1) infinite; }
 .ar-live .ar-die1 { animation-delay: 0.1s; }
 .ar-live .ar-die2 { animation-delay: 0.2s; }
 .ar-live .ar-die3 { animation-delay: 0.3s; }
@@ -747,12 +747,13 @@ body {
   text-shadow: 0 3px 0 #8a5a12, 0 0 18px rgba(255, 196, 80, 0.7);
 }
 @keyframes ar-yacht-l {
-  0%, 63% { opacity: 0; transform: translateY(30%) scale(0.4); }
-  69% { opacity: 1; transform: translateY(-12%) scale(1.25); }
-  73%, 96% { opacity: 1; transform: translateY(0) scale(1); }
-  100% { opacity: 0; transform: translateY(0) scale(1); }
+  0%, 54% { opacity: 0; transform: translateY(30%) scale(0.4); }
+  59% { opacity: 1; transform: translateY(-12%) scale(1.25); }
+  62%, 82% { opacity: 1; transform: translateY(0) scale(1); }
+  /* 글자가 다 사라지고 0.2초쯤 쉰 뒤 다음 주사위가 떨어진다 */
+  85%, 100% { opacity: 0; transform: translateY(0) scale(1); }
 }
-.ar-live .ar-yacht-l { animation: ar-yacht-l 3.5s ease-out infinite; }
+.ar-live .ar-yacht-l { animation: ar-yacht-l 4.1s ease-out infinite; }
 
 /* 핑퐁: 공이 먼 코트 ↔ 가까운 코트를 오간다 (가까울수록 크게) */
 @keyframes ar-ball {
