@@ -30,7 +30,8 @@ export async function until(fn, ms = 3000) {
 /** 서버를 띄우고 /health 가 응답할 때까지 기다린다 */
 export async function startServer(port) {
   const child = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], {
-    env: { ...process.env, PORT: String(port) },
+    // 랭킹 키를 빈 값으로 → .env 가 있어도 실제 랭킹에 테스트 판이 기록되지 않는다
+    env: { ...process.env, PORT: String(port), UPSTASH_REDIS_REST_URL: '', UPSTASH_REDIS_REST_TOKEN: '' },
     stdio: ['ignore', 'ignore', 'pipe'],
   })
   let stderr = ''

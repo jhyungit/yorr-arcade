@@ -22,7 +22,11 @@ import path from 'node:path'
 import fs from 'node:fs'
 import express from 'express'
 import { Server } from 'socket.io'
-import { recordWeekly, weeklyTop } from './ranking.js'
+// 로컬 실행용 server/.env (랭킹 키 등). 배포(Render)는 파일 없이 환경변수로 받는다.
+try {
+  process.loadEnvFile(new URL('.env', import.meta.url))
+} catch {}
+const { recordWeekly, weeklyTop } = await import('./ranking.js')
 
 const PORT = process.env.PORT || 3001
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
