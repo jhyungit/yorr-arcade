@@ -87,7 +87,7 @@ export default function RankingTicker() {
             <span key={r.nickname} className="flex items-center gap-2 px-6 text-sm">
               <Medal rank={r.rank} />
               <span className="font-bold text-white/85">{r.nickname}</span>
-              <span className="label-mono text-[13px] text-white/45">{r.score}점</span>
+              <span className="label-mono text-[15px] font-bold text-white/70">{r.score}점</span>
             </span>
           ))}
         </div>
@@ -114,7 +114,7 @@ export default function RankingTicker() {
               <li key={r.nickname} className="flex items-center gap-3 px-4 py-2 text-sm">
                 <Medal rank={r.rank} />
                 <span className="min-w-0 flex-1 truncate font-bold text-white/85">{r.nickname}</span>
-                <span className="label-mono text-white/55">{r.score}</span>
+                <span className="label-mono text-[15px] font-bold text-white/75">{r.score}</span>
               </li>
             ))}
           </ol>
