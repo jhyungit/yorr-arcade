@@ -738,7 +738,6 @@ body {
   /* 지연(delay) 때문에 다음 바퀴로 넘어간 알이 바닥에 남아 보이지 않게 숨겨 둔다 */
   90.5%, 100% { opacity: 0; transform: translateY(-180%) rotate(0deg); }
 }
-}
 .ar-live .ar-die { animation: ar-die 4.2s cubic-bezier(0.3, 0.7, 0.4, 1) infinite; }
 .ar-live .ar-die1 { animation-delay: 0.1s; }
 .ar-live .ar-die2 { animation-delay: 0.2s; }
