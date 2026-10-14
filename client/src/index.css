@@ -750,9 +750,9 @@ body {
   text-shadow: 0 3px 0 #8a5a12, 0 0 18px rgba(255, 196, 80, 0.7);
 }
 @keyframes ar-yacht-l {
-  0%, 66.7% { opacity: 0; transform: translateY(30%) scale(0.4); }
-  71% { opacity: 1; transform: translateY(-12%) scale(1.25); }
-  74%, 90.6% { opacity: 1; transform: translateY(0) scale(1); }
+  0%, 61.9% { opacity: 0; transform: translateY(30%) scale(0.4); }
+  66.2% { opacity: 1; transform: translateY(-12%) scale(1.25); }
+  69.2%, 90.6% { opacity: 1; transform: translateY(0) scale(1); }
   90.7%, 100% { opacity: 0; }
 }
 .ar-live .ar-yacht-l { animation: ar-yacht-l 4.2s ease-out infinite; }
