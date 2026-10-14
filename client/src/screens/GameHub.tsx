@@ -269,7 +269,7 @@ export default function GameHub({
             ? `PHONE ${phoneCount} CONNECTED${pairCode ? ` · CODE ${pairCode}` : ''}`
             : pairCode
               ? `WAITING FOR PHONE · CODE ${pairCode}`
-              : 'INSERT PHONE — 폰을 컨트롤러로 연결하기'}
+              : 'INSERT PHONE — 휴대폰 연결하기'}
         </button>
       </footer>
 
