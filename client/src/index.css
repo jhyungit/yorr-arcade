@@ -1182,9 +1182,6 @@ body {
 .rk-belt {
   animation: rk-belt linear infinite;
 }
-.rk-window:hover .rk-belt {
-  animation-play-state: paused;
-}
 @keyframes rk-belt {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
