@@ -88,7 +88,7 @@ export default function RankingTicker() {
 
       {open && (
         <div className="rk-panel absolute right-3 top-full mt-2 w-72 sm:right-8">
-          <div className="label-mono px-4 pb-2 pt-3 text-[11px] text-white/40">WEEKLY TOP 10 · 매주 월 00시 초기화</div>
+          <div className="label-mono px-4 pb-2 pt-3 text-[11px] text-white/40">WEEKLY TOP 10</div>
           <ol>
             {rows.slice(0, 10).map((r) => (
               <li key={r.nickname} className="flex items-center gap-3 px-4 py-2 text-sm">
