@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 type Row = { nickname: string; score: number; rank: number }
 
 /**
  * RankingTicker — 허브 상단 "이번 주 요트 랭킹" 띠
- * - 가운데: TOP5 가 오른쪽에서 나와 왼쪽으로 흘러가는 무빙워크(무한 루프)
+ * - 가운데: TOP5 한 벌이 오른쪽 끝에서 나와 왼쪽으로 다 들어가면, 1초 쉬고 다시 나온다
  * - 오른쪽: TOP10 버튼 → 아래로 펼쳐지는 패널
  * 60초 폴링, 탭이 안 보일 땐 쉬고 돌아오면 바로 한 번 읽는다.
  * 서버에 랭킹 저장소가 없거나 기록이 없으면 띠 자체를 숨긴다.
@@ -13,6 +13,11 @@ export default function RankingTicker() {
   const [rows, setRows] = useState<Row[]>([])
   const [open, setOpen] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
+  const winRef = useRef<HTMLDivElement>(null)
+  const beltRef = useRef<HTMLDivElement>(null)
+  // lap 이 바뀌면 띠를 새로 마운트 → 애니메이션이 처음(오른쪽 밖)부터 다시
+  const [lap, setLap] = useState(0)
+  const [secs, setSecs] = useState(0)
 
   useEffect(() => {
     const load = () => {
@@ -46,13 +51,15 @@ export default function RankingTicker() {
     }
   }, [open])
 
-  if (!rows.length) return null
-
-  // 무빙워크: 한 바퀴가 화면보다 짧으면 빈틈이 생기므로 8칸 이상 되게 반복 → 두 벌 이어 붙여 -50% 이동
   const top5 = rows.slice(0, 5)
-  const lap: Row[] = []
-  while (lap.length < 8) lap.push(...top5)
-  const belt = [...lap, ...lap]
+
+  // 화면 폭 + 띠 길이를 일정한 속도(초당 90px)로 지나가게 → 사람이 많든 적든 속도가 같다
+  useLayoutEffect(() => {
+    const w = (winRef.current?.offsetWidth ?? 0) + (beltRef.current?.offsetWidth ?? 0)
+    setSecs(w / 90)
+  }, [lap, rows])
+
+  if (!rows.length) return null
 
   return (
     <div ref={boxRef} className="rk relative z-30 flex h-11 shrink-0 items-stretch">
@@ -61,10 +68,16 @@ export default function RankingTicker() {
         <span className="font-display text-[13px] font-black tracking-tight">이번 주 요트 랭킹</span>
       </div>
 
-      <div className="rk-window relative min-w-0 flex-1 overflow-hidden">
-        <div className="rk-belt flex h-full w-max items-center" style={{ animationDuration: `${lap.length * 4}s` }}>
-          {belt.map((r, i) => (
-            <span key={i} className="flex items-center gap-2 px-6 text-sm" aria-hidden={i >= lap.length}>
+      <div ref={winRef} className="rk-window relative min-w-0 flex-1 overflow-hidden">
+        <div
+          key={lap}
+          ref={beltRef}
+          className="rk-belt absolute inset-y-0 flex w-max items-center"
+          style={{ animationDuration: `${secs}s`, animationPlayState: secs ? 'running' : 'paused' }}
+          onAnimationEnd={() => setTimeout(() => setLap((n) => n + 1), 1000)}
+        >
+          {top5.map((r) => (
+            <span key={r.nickname} className="flex items-center gap-2 px-6 text-sm">
               <Medal rank={r.rank} />
               <span className="font-bold text-white/85">{r.nickname}</span>
               <span className="label-mono text-[13px] text-white/45">{r.score}점</span>
