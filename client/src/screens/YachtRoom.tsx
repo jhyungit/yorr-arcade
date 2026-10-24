@@ -5,6 +5,7 @@ import PlayScreen from './PlayScreen'
 import Results from './Results'
 import YachtDice from '../games/yacht/YachtDice'
 import { useRoom } from '../net/useRoom'
+import { useChat } from '../net/useChat'
 
 /**
  * YachtRoom — 요트 다이스의 화면 흐름
@@ -51,6 +52,8 @@ export default function YachtRoom({
     subscribeReaction,
     subscribeLog,
   } = useRoom()
+  // 채팅은 화면(대기실 ↔ 게임)보다 위에 둬야 전환해도 목록·안 읽은 수가 유지된다
+  const chat = useChat(youId)
 
   if (solo) return <YachtDice onExit={() => setSolo(false)} phoneConnected={phoneConnected} />
 
@@ -88,7 +91,14 @@ export default function YachtRoom({
 
   if (room.status === 'lobby') {
     return (
-      <Lobby room={room} isHost={isHost} youId={youId} onStart={startGame} onLeave={exit} />
+      <Lobby
+        room={room}
+        isHost={isHost}
+        youId={youId}
+        onStart={startGame}
+        onLeave={exit}
+        chat={chat}
+      />
     )
   }
 
@@ -118,6 +128,7 @@ export default function YachtRoom({
       onLeave={exit}
       subscribeReaction={subscribeReaction}
       subscribeLog={subscribeLog}
+      chat={chat}
     />
   )
 }
