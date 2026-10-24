@@ -1,7 +1,9 @@
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import PlayScreen from './PlayScreen'
 import { emptyScoreSheet, scoreFor, totalScore, type CategoryId } from '../game/yacht'
-import type { PlayerState, ReactionType, RoomLog, RoomState } from '../net/types'
+import type { ChatMessage, PlayerState, ReactionType, RoomLog, RoomState } from '../net/types'
+import type { Chat } from '../net/useChat'
+import { seatColor } from '../components/PlayerStrip'
 
 /**
  * PlayPreview — 서버 없이 mock 으로 PlayScreen(턴제)을 띄우는 프리뷰.
@@ -32,9 +34,49 @@ function mockPlayer(
 
 const TURN_MS = 45000
 
+/** 서버 없는 채팅 — 보내면 1초 뒤 상은이 따라 말한다 (말풍선·안 읽은 배지 확인용) */
+function useMockChat(): Chat {
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    { id: 'm0', ts: 0, text: '민서님이 들어왔어요', system: true },
+    { id: 'm1', ts: 0, text: '잘 부탁해요!', playerId: 'p3', name: '민서', color: seatColor('p3') },
+  ])
+  const [unread, setUnread] = useState(0)
+  const visible = useRef(false)
+  const subs = useRef(new Set<(m: ChatMessage) => void>())
+  const seq = useRef(2)
+
+  const push = useCallback((m: Omit<ChatMessage, 'id' | 'ts'>) => {
+    const full = { ...m, id: 'm' + seq.current++, ts: Date.now() }
+    setMessages((l) => [...l, full].slice(-50))
+    if (!visible.current && m.playerId !== 'p1') setUnread((n) => n + 1)
+    subs.current.forEach((cb) => cb(full))
+  }, [])
+
+  return {
+    messages,
+    unread,
+    notice: null,
+    send: (text: string) => {
+      push({ text, playerId: 'p1', name: '이정현', color: seatColor('p1') })
+      setTimeout(() => push({ text: `ㅋㅋ ${text}`, playerId: 'p2', name: '상은', color: seatColor('p2') }), 1000)
+    },
+    setVisible: useCallback((v: boolean) => {
+      visible.current = v
+      if (v) setUnread(0)
+    }, []),
+    subscribe: useCallback((cb: (m: ChatMessage) => void) => {
+      subs.current.add(cb)
+      return () => {
+        subs.current.delete(cb)
+      }
+    }, []),
+  }
+}
+
 export default function PlayPreview() {
   const reactionCb = useRef<((r: { playerId: string; type: ReactionType }) => void) | null>(null)
   const logCb = useRef<((log: RoomLog) => void) | null>(null)
+  const chat = useMockChat()
 
   const [room, setRoom] = useState<RoomState>(() => ({
     code: 'AB3K7M',
@@ -144,6 +186,7 @@ export default function PlayPreview() {
           logCb.current = null
         }
       }}
+      chat={chat}
     />
   )
 }

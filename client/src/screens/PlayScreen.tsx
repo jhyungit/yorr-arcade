@@ -4,6 +4,7 @@ import ScoreBoard from '../components/ScoreBoard'
 import PlayerStrip, { seatColor } from '../components/PlayerStrip'
 import RoundTimer from '../components/RoundTimer'
 import ReactionDock from '../components/ReactionDock'
+import ChatBox from '../components/ChatBox'
 import SettingsGear from '../components/FeedbackSettings'
 import { notifyDiceLanded, useRollInput } from '../games/yacht/useRollInput'
 import { useYachtController } from '../games/yacht/useYachtController'
@@ -18,6 +19,7 @@ import {
   type RoomLog,
   type RoomState,
 } from '../net/types'
+import type { Chat } from '../net/useChat'
 
 /**
  * PlayScreen — 온라인 방에서의 요트 플레이 화면 (턴제)
@@ -31,10 +33,14 @@ import {
  *  - room.rollSeq 가 바뀌면 → 누가 굴렸다. 굴리기 연출을 재생한다(rollKey+1).
  *  - "구르는 중" 잠금은 타이머가 아니라 보드가 실제로 멈췄다고 알려줄 때 풀린다.
  * 내 차례가 아니면 모든 조작이 잠기고 관전만 한다.
+ *
+ * 채팅: 상시 패널 없이 칩 위 말풍선 + 💬 버튼(데스크톱 오른쪽 패널 / 모바일 하단 시트).
+ * 입력창에 포커스가 있는 동안은 굴리기 입력(센서·폰 흔들기)을 잠근다.
  */
 
 const MAX_ROLLS = 3
 const FRESH_DICE = [1, 2, 3, 4, 5]
+const BUBBLE_MS = 3500 // 칩 위 채팅 말풍선이 떠 있는 시간
 
 /** 족보 콜아웃 문구·급·색 (솔로와 같은 연출 — 관전자도 같이 본다) */
 const CALLOUT: Record<string, { text: string; tier: 'big' | 'mid' | 'low'; color: string }> = {
@@ -58,6 +64,7 @@ export interface PlayScreenProps {
   onLeave: () => void
   subscribeReaction: (cb: (r: { playerId: string; type: ReactionType }) => void) => () => void
   subscribeLog: (cb: (log: RoomLog) => void) => () => void
+  chat: Chat
 }
 
 interface Float {
@@ -79,6 +86,7 @@ export default function PlayScreen({
   onLeave,
   subscribeReaction,
   subscribeLog,
+  chat,
 }: PlayScreenProps) {
   // 화면에 그리는 주사위 — 서버 값을 받아 연출과 함께 갱신한다
   const [boardValues, setBoardValues] = useState<number[]>(FRESH_DICE)
@@ -93,6 +101,10 @@ export default function PlayScreen({
   const [floats, setFloats] = useState<Float[]>([])
   const [callout, setCallout] = useState<{ id: number; cat: CategoryId } | null>(null)
   const [lastLog, setLastLog] = useState<RoomLog | null>(null)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [chatFocused, setChatFocused] = useState(false)
+  const [bubbles, setBubbles] = useState<Record<string, { id: string; text: string }>>({})
+  const chatPanelRef = useRef<HTMLDivElement>(null)
 
   const floatId = useRef(0)
   const calloutSeq = useRef(0)
@@ -186,6 +198,70 @@ export default function PlayScreen({
     return off
   }, [subscribeLog])
 
+  // 채팅 수신 → 그 사람 칩 위에 말풍선 (같은 사람이 또 말하면 교체)
+  const { subscribe: subscribeChat, setVisible: setChatVisible } = chat
+  useEffect(() => {
+    const timers: number[] = []
+    const off = subscribeChat((m) => {
+      if (m.system || !m.playerId) return
+      const pid = m.playerId
+      setBubbles((b) => ({ ...b, [pid]: { id: m.id, text: m.text } }))
+      timers.push(
+        window.setTimeout(
+          () =>
+            setBubbles((b) => {
+              if (b[pid]?.id !== m.id) return b
+              const rest = { ...b }
+              delete rest[pid]
+              return rest
+            }),
+          BUBBLE_MS,
+        ),
+      )
+    })
+    return () => {
+      off()
+      timers.forEach((t) => window.clearTimeout(t))
+    }
+  }, [subscribeChat])
+
+  // 패널이 열려 있을 때만 "보는 중" → 열면 안 읽은 수 0
+  useEffect(() => {
+    setChatVisible(chatOpen)
+    return () => setChatVisible(false)
+  }, [chatOpen, setChatVisible])
+
+  const closeChat = useCallback(() => {
+    setChatOpen(false)
+    setChatFocused(false) // 닫히며 입력창이 숨으면 blur 가 안 올 수 있다
+  }, [])
+
+  // 열려 있는 동안: ESC 로 닫기 + 모바일 키보드 높이를 시트에 반영
+  useEffect(() => {
+    if (!chatOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeChat()
+    }
+    window.addEventListener('keydown', onKey)
+    /* iOS 는 키보드가 떠도 레이아웃 뷰포트가 그대로라 fixed 하단 시트가 키보드에 가린다.
+       visualViewport 로 가려진 높이(--kb)와 보이는 높이(--vvh)를 시트에 넘긴다. */
+    const vv = window.visualViewport
+    const fit = () => {
+      const el = chatPanelRef.current
+      if (!vv || !el) return
+      el.style.setProperty('--kb', `${Math.max(0, window.innerHeight - vv.height - vv.offsetTop)}px`)
+      el.style.setProperty('--vvh', `${vv.height}px`)
+    }
+    fit()
+    vv?.addEventListener('resize', fit)
+    vv?.addEventListener('scroll', fit)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      vv?.removeEventListener('resize', fit)
+      vv?.removeEventListener('scroll', fit)
+    }
+  }, [chatOpen, closeChat])
+
   useEffect(
     () => () => {
       if (calloutTimer.current) window.clearTimeout(calloutTimer.current)
@@ -209,7 +285,7 @@ export default function PlayScreen({
      (예전엔 세 갈래가 각자 roll() 을 불러서 한 번 흔들기에 기회가 2개 날아갔다) */
   const { requestRoll, permission, requestPermission } = useRollInput({
     roll,
-    canRoll,
+    canRoll: canRoll && !chatFocused, // 채팅 입력 중엔 센서·폰 흔들기로 안 굴러가게
     motionOn,
   })
 
@@ -351,6 +427,7 @@ export default function PlayScreen({
             youId={you.id}
             turnId={room.turnId}
             hostId={room.hostId}
+            bubbles={bubbles}
           />
         </div>
 
@@ -410,7 +487,19 @@ export default function PlayScreen({
 
             {/* 리액션 독 */}
             <div className="mt-4">
-              <ReactionDock onReact={onReact} />
+              <ReactionDock onReact={onReact}>
+                <button
+                  onClick={() => (chatOpen ? closeChat() : setChatOpen(true))}
+                  aria-label={chat.unread ? `채팅 열기 · 안 읽은 메시지 ${chat.unread}개` : '채팅 열기'}
+                  aria-expanded={chatOpen}
+                  className="yd-chat-fab w-11 h-11 rounded-full bg-[var(--card)] border border-[var(--line)] text-xl flex items-center justify-center active:scale-90 transition-transform shadow-sm"
+                >
+                  💬
+                  {chat.unread > 0 && (
+                    <span className="yd-chat-badge">{chat.unread > 99 ? '99+' : chat.unread}</span>
+                  )}
+                </button>
+              </ReactionDock>
             </div>
           </section>
 
@@ -456,6 +545,19 @@ export default function PlayScreen({
             </span>
           ))}
         </div>
+      </div>
+
+      {/* ── 채팅 패널 (데스크톱: 오른쪽 슬라이드 / 모바일: 하단 시트, 닫혀도 마운트 유지 → 슬라이드) ── */}
+      {chatOpen && <div className="yd-chat-backdrop" onClick={closeChat} />}
+      <div
+        ref={chatPanelRef}
+        className="yd-chat-panel"
+        data-open={chatOpen ? 1 : 0}
+        role="dialog"
+        aria-label="채팅"
+        aria-hidden={!chatOpen}
+      >
+        <ChatBox chat={chat} youId={you.id} onFocusChange={setChatFocused} onClose={closeChat} />
       </div>
 
       {/* ── 족보 콜아웃 ── */}

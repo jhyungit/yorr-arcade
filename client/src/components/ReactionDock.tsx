@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { REACTION_EMOJI, type ReactionType } from '../net/types'
 
 /**
@@ -6,11 +7,13 @@ import { REACTION_EMOJI, type ReactionType } from '../net/types'
  */
 interface ReactionDockProps {
   onReact: (type: ReactionType) => void
+  /** 줄 끝에 붙일 버튼 (게임 화면의 💬 채팅) */
+  children?: ReactNode
 }
 
 const ORDER: ReactionType[] = ['like', 'laugh', 'shock', 'clap', 'gg']
 
-export default function ReactionDock({ onReact }: ReactionDockProps) {
+export default function ReactionDock({ onReact, children }: ReactionDockProps) {
   return (
     <div className="flex items-center justify-center gap-1.5">
       {ORDER.map((type) => (
@@ -23,6 +26,7 @@ export default function ReactionDock({ onReact }: ReactionDockProps) {
           {REACTION_EMOJI[type]}
         </button>
       ))}
+      {children}
     </div>
   )
 }

@@ -80,3 +80,14 @@ export interface JoinAck {
 }
 
 export type { CategoryId }
+
+/** 방 채팅 한 줄 (server pushChat). 시스템 메시지는 system=true 에 text 만 있다 */
+export interface ChatMessage {
+  id: string
+  ts: number
+  text: string
+  system?: boolean
+  playerId?: string
+  name?: string // 서버 좌석 정보로 채운 이름
+  color?: string // 좌석 색
+}

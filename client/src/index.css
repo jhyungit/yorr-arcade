@@ -617,6 +617,235 @@ body {
 }
 
 /* =============================================================
+   방 채팅 — 대기실 칼럼 · 게임 화면 패널 공용 카드 (.yd-card 위에 얹는다)
+   높이는 부모가 정하고, 메시지 영역만 스크롤 · 입력창은 아래 고정
+   ============================================================= */
+.yd-chat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 10px 10px;
+}
+.yd-chat-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 4px 6px;
+}
+.yd-chat-sys {
+  align-self: center;
+  padding: 1px 0;
+  font-size: 11px;
+  color: var(--ink-3);
+  text-align: center;
+}
+.yd-chat-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  max-width: 85%;
+}
+.yd-chat-row[data-mine='1'] { align-self: flex-end; }
+.yd-chat-avatar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+}
+.yd-chat-name {
+  margin: 0 0 2px 2px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.yd-chat-bubble {
+  padding: 6px 10px;
+  border-radius: 12px 12px 12px 4px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.yd-chat-row[data-mine='1'] .yd-chat-bubble {
+  border-radius: 12px 12px 4px 12px;
+  border-color: transparent;
+  background: linear-gradient(180deg, #f0c983, #d8a24a);
+  color: #17120a;
+  font-weight: 600;
+}
+.yd-chat-new {
+  position: absolute;
+  left: 50%;
+  bottom: 60px;
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #17120a;
+  background: var(--gold-2);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+.yd-chat-notice {
+  padding: 4px 0 0;
+  font-size: 11px;
+  color: var(--gold-2);
+  text-align: center;
+}
+.yd-chat-input {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.yd-chat-input input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  font-size: 16px; /* 16px 미만이면 iOS 가 포커스 때 화면을 확대해 레이아웃이 틀어진다 */
+  outline: none;
+}
+.yd-chat-input input:focus { border-color: var(--gold); }
+.yd-chat-input input::placeholder { color: var(--ink-3); font-size: 13px; }
+.yd-chat-input button {
+  width: 42px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  font-size: 17px;
+  font-weight: 900;
+  color: #17120a;
+  background: linear-gradient(180deg, #f0c983, #d8a24a 55%, #b8842f);
+}
+.yd-chat-input button:disabled {
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--ink-3);
+}
+.yd-chat-close {
+  padding: 0 4px;
+  font-size: 13px;
+  letter-spacing: 0;
+  color: var(--ink-2);
+}
+
+/* 게임 화면 — 리액션 줄 끝 💬 버튼 + 안 읽은 수 */
+.yd-chat-fab { position: relative; }
+.yd-chat-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 18px;
+  color: #fff;
+  background: #e0483a;
+  box-shadow: 0 0 0 2px #100e0c;
+}
+
+/* 게임 화면 패널 — 데스크톱: 오른쪽 슬라이드(점수판 위 오버레이) / 모바일: 하단 시트.
+   닫혀 있을 땐 visibility 를 늦게 꺼서 슬라이드가 끝난 뒤 탭 포커스에서도 빠진다 */
+.yd-chat-panel {
+  position: fixed;
+  z-index: 40;
+  visibility: hidden;
+  transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.25, 1), visibility 0s 0.28s;
+}
+.yd-chat-panel[data-open='1'] {
+  visibility: visible;
+  transform: none;
+  transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+.yd-chat-panel .yd-chat {
+  height: 100%;
+  background: linear-gradient(180deg, #241d15, #15110d);
+}
+.yd-chat-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+  background: rgba(0, 0, 0, 0.45);
+}
+@media (min-width: 1024px) {
+  .yd-chat-panel {
+    top: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: 400px;
+    transform: translateX(calc(100% + 24px));
+  }
+  .yd-chat-backdrop { display: none; }
+}
+@media (max-width: 1023.98px) {
+  /* --kb / --vvh 는 PlayScreen 이 visualViewport 로 채운다 → 키보드 위에 붙는다 */
+  .yd-chat-panel {
+    left: 0;
+    right: 0;
+    bottom: var(--kb, 0px);
+    height: min(62vh, calc(var(--vvh, 100vh) - 48px));
+    transform: translateY(110%);
+  }
+  .yd-chat-panel .yd-chat { border-radius: 18px 18px 0 0; }
+}
+
+/* 게임 화면 — 플레이어 칩 위 말풍선 */
+.yd-say {
+  position: absolute;
+  bottom: calc(100% - 6px);
+  z-index: 20;
+  max-width: 180px;
+  padding: 5px 10px;
+  border-radius: 12px;
+  background: #f4efe4;
+  color: #17120a;
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+  transform: translateX(-50%);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  animation: yd-say-in 0.22s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+.yd-say::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  background: inherit;
+  transform: translateX(-50%) rotate(45deg);
+}
+.yd-say > span {
+  position: relative; /* 꼬리(::after) 위로 */
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+@keyframes yd-say-in {
+  from { opacity: 0; transform: translate(-50%, 6px) scale(0.9); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+/* =============================================================
    게임 허브 — 아케이드 캐비닛
    -------------------------------------------------------------
    게임 5종이 전부 다크 톤인데 허브만 밝아서 톤이 튀었다. 오락실 캐비닛의
