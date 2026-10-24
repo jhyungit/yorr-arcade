@@ -69,6 +69,15 @@ const AUTO_ROLL_VIEW_MS = 2600
    굴리는 연출이 1.5~3.2초라 정상 플레이가 이 간격에 걸릴 일은 없다. */
 const MIN_ROLL_GAP_MS = 350
 
+// 방 채팅 — 기록은 방 객체에 붙어 있어서 방이 지워지면 같이 사라진다
+const CHAT_MAX_LEN = 100
+const CHAT_HISTORY = 50 // 입장·재접속 때 넘겨줄 최근 메시지 수
+const CHAT_WINDOW_MS = 1000 // 이 시간 안에 2개까지만 (3번째는 무시하고 본인에게 안내)
+
+// 좌석(p1~p6)별 고정 색 — client/src/components/PlayerStrip.tsx 의 SEAT_COLORS 와 같은 값.
+// 채팅 이름·색은 클라가 보낸 값이 아니라 서버의 방 정보로 채운다.
+const SEAT_COLORS = ['#5B8DEF', '#2FA98B', '#E0483A', '#F0A64E', '#9B7BE0', '#4FB0C6']
+
 // code -> Room
 const rooms = new Map()
 
@@ -213,6 +222,7 @@ function makePlayer(seatId, nickname, socketId) {
     rollsLeft: MAX_ROLLS,
     rolled: false, // 이번 차례에 한 번이라도 굴렸는가
     lastRollAt: 0, // 중복 굴리기 요청을 걸러내기 위한 시각
+    chatAt: [0, 0], // 최근 채팅 2개의 시각 (rate limit)
     total: 0,
   }
 }
@@ -260,6 +270,20 @@ function roomState(room) {
 /** 방 전체에 최신 상태 방송 */
 function broadcast(io, room) {
   io.to(room.code).emit('room:state', roomState(room))
+}
+
+/** 채팅 한 줄을 기록하고 방 전체에 보낸다 (최근 CHAT_HISTORY 개만 보관) */
+function pushChat(io, room, msg) {
+  room.chatSeq += 1
+  const full = { id: `${room.code}-${room.chatSeq}`, ts: Date.now(), ...msg }
+  room.chat.push(full)
+  if (room.chat.length > CHAT_HISTORY) room.chat.shift()
+  io.to(room.code).emit('chat:msg', full)
+}
+
+/** 입장/퇴장 같은 시스템 메시지 */
+function systemChat(io, room, text) {
+  pushChat(io, room, { system: true, text })
 }
 
 /** 총점 순위 (동점은 같은 등수) */
@@ -685,12 +709,15 @@ io.on('connection', (socket) => {
       turnMs: TURN_MS,
       timer: null,
       players: [host],
+      chat: [],
+      chatSeq: 0,
     }
     rooms.set(code, room)
     socket.join(code)
     joinedCode = code
     mySeat = host.id
     ack?.({ ok: true, code, youId: host.id, token: host.token })
+    socket.emit('chat:history', room.chat)
     broadcast(io, room)
   })
 
@@ -717,6 +744,9 @@ io.on('connection', (socket) => {
     joinedCode = code
     mySeat = p.id
     ack?.({ ok: true, code, youId: p.id, token: p.token })
+    // 기록 먼저, 입장 알림은 그 뒤에 방송 → 들어온 사람에게 알림이 두 번 가지 않는다
+    socket.emit('chat:history', room.chat)
+    systemChat(io, room, `${p.nickname}님이 들어왔어요`)
     broadcast(io, room)
   })
 
@@ -736,12 +766,15 @@ io.on('connection', (socket) => {
       ack?.({ ok: false, error: '자리를 찾을 수 없어요.' })
       return
     }
+    const wasGone = !p.connected
     p.socketId = socket.id
     p.connected = true
     socket.join(code)
     joinedCode = code
     mySeat = p.id
     ack?.({ ok: true, code, youId: p.id, token: p.token })
+    socket.emit('chat:history', room.chat)
+    if (wasGone) systemChat(io, room, `${p.nickname}님이 다시 접속했어요`)
     // 끊긴 사이 짧게 걸려 있던 제한시간을 원래대로 돌려준다
     if (myTurn(room, p)) armTurnTimer(io, room)
     broadcast(io, room)
@@ -801,6 +834,28 @@ io.on('connection', (socket) => {
     const c = ctx()
     if (!c || !REACTION_TYPES.includes(type)) return
     io.to(c.room.code).emit('reaction:recv', { playerId: c.player.id, type })
+  })
+
+  /** 채팅 → 같은 방에만. 이름·색은 서버의 좌석 정보로 채운다 */
+  socket.on('chat:send', (raw) => {
+    const c = ctx()
+    if (!c || typeof raw !== 'string') return
+    // 코드포인트 단위로 잘라야 이모지가 반쪽 나지 않는다
+    const text = Array.from(raw.trim()).slice(0, CHAT_MAX_LEN).join('')
+    if (!text) return
+    const { room, player } = c
+    const now = Date.now()
+    if (now - player.chatAt[0] < CHAT_WINDOW_MS) {
+      socket.emit('chat:notice', '너무 빨라요. 잠시 후 다시 보내 주세요.')
+      return
+    }
+    player.chatAt = [player.chatAt[1], now]
+    pushChat(io, room, {
+      playerId: player.id,
+      name: player.nickname,
+      color: SEAT_COLORS[SEAT_IDS.indexOf(player.id)],
+      text,
+    })
   })
 
   /** 다시 하기 (방장만) → 대기실로 */
@@ -867,9 +922,11 @@ function dropPlayer(io, room, player, explicit) {
 
   if (!room.players.some((p) => p.connected)) {
     clearTurnTimer(room)
-    rooms.delete(room.code)
+    rooms.delete(room.code) // 채팅 기록(room.chat)도 같이 사라진다
     return
   }
+
+  systemChat(io, room, `${player.nickname}님이 ${remove ? '나갔어요' : '연결이 끊겼어요'}`)
 
   // 게임 중에 차례인 사람이 빠졌다면 게임이 멈추지 않게 처리
   if (room.status === 'playing') {
